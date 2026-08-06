@@ -1,0 +1,70 @@
+# andino-kb example configuration.
+# Every ${VAR} expands from the environment at load time; unset variables
+# expand to "" and fail validation where a value is required.
+
+server:
+  bind: "127.0.0.1:8180"
+  data_dir: "/var/lib/andino-kb"
+  # Omit api_keys entirely for unauthenticated localhost use.
+  api_keys:
+    - key: "${ANDINO_KB_API_KEY}"
+      scope: readwrite          # read | readwrite
+  log_level: info               # debug | info | warn | error
+  log_format: text              # text | json
+
+storage:
+  provider: sqlite              # the only provider in v0.1
+
+inference:
+  backends:
+    # Any OpenAI-compatible endpoint: llama.cpp, vLLM, Ollama, OpenAI, ...
+    - name: local-llama
+      base_url: "http://127.0.0.1:8080/v1"
+      api_key: "${LLAMA_API_KEY}"
+  embedding_models:
+    - name: qwen3-embed
+      backend: local-llama
+      model: "qwen3-embedding-0.6b"
+      dimensions: 1024
+      batch_size: 32
+      max_retries: 4
+  rerank_models: []             # optional /v1/rerank models
+
+defaults:
+  chunking:
+    strategy: markdown          # markdown | plaintext | code
+    max_tokens: 512
+    overlap_tokens: 64
+  embedding_model: qwen3-embed
+  rerank_model: ""              # "" disables reranking
+
+knowledge_bases:
+  # A local directory, kept fresh by a filesystem watcher.
+  - name: obsidian-vault
+    description: "Personal Obsidian vault"
+    sources:
+      - name: vault
+        type: localdir
+        path: "/home/user/vault"
+        include: ["**/*.md"]
+        exclude: [".obsidian/**", ".trash/**"]
+        watch: true
+        debounce_ms: 2000
+
+  # A git repository, polled for changes.
+  - name: team-docs
+    description: "Engineering docs from the monorepo"
+    sources:
+      - name: docs-repo
+        type: git
+        url: "https://github.com/example/docs.git"
+        branch: main
+        paths: ["docs/**/*.md", "README.md"]
+        poll_interval: 5m
+        token_env: GH_TOKEN     # optional auth token env var
+
+  # Agent-writable memory: no sources on disk, documents arrive via the
+  # `store` MCP tool / POST /v1/kb/agent-memory/documents.
+  - name: agent-memory
+    description: "Shared memory for agents"
+    writable: true
