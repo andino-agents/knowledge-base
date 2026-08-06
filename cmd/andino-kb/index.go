@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -98,6 +99,12 @@ func syncKB(ctx context.Context, name string, kb *app.KB, logger *slog.Logger) e
 			"duration", time.Since(start).Round(time.Millisecond))
 	}
 	return nil
+}
+
+// discardLogger silences runtime noise in commands whose output IS the
+// report (doctor).
+func discardLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError + 4}))
 }
 
 func newLogger(cfg *config.Config) *slog.Logger {

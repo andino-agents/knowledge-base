@@ -20,6 +20,8 @@ import (
 type Server struct {
 	App    *app.App
 	Logger *slog.Logger
+	// ObserveSearch, when set, records search latency per KB (Prometheus).
+	ObserveSearch func(kb string, seconds float64)
 
 	jobsMu sync.Mutex
 	jobs   map[string]*reindexJob
@@ -157,6 +159,9 @@ func (s *Server) searchKB(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if s.ObserveSearch != nil {
+		s.ObserveSearch(r.PathValue("kb"), time.Since(start).Seconds())
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"results":     hits,
 		"duration_ms": time.Since(start).Milliseconds(),
@@ -174,6 +179,9 @@ func (s *Server) searchAll(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if s.ObserveSearch != nil {
+		s.ObserveSearch("_all", time.Since(start).Seconds())
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"results":     hits,

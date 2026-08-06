@@ -86,6 +86,9 @@ func runServe(ctx context.Context, cfg *config.Config, wait time.Duration) error
 
 	mux := http.NewServeMux()
 	rest := restapi.New(a, logger)
+	rest.ObserveSearch = func(kb string, seconds float64) {
+		metrics.SearchDuration.WithLabelValues(kb).Observe(seconds)
+	}
 	mux.Handle("/v1/", rest.Handler())
 	mux.Handle("/mcp", authMCP(cfg, mcp.NewStreamableHTTPHandler(
 		func(*http.Request) *mcp.Server { return mcpserver.New(a, version) },
