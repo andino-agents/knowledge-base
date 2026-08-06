@@ -1,0 +1,27 @@
+version: 2
+
+project_name: andino-kb
+
+builds:
+  - id: andino-kb
+    main: ./cmd/andino-kb
+    binary: andino-kb
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - formats: [tar.gz]
+    files: [LICENSE, README.md, config.example.yaml, deploy/andino-kb.service]
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github
+  filters:
+    exclude: ["^docs:", "^test:", "^chore:"]

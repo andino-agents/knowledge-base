@@ -8,6 +8,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -18,6 +20,7 @@ import (
 	"github.com/andino-agents/knowledge-base/internal/pipeline"
 	"github.com/andino-agents/knowledge-base/internal/pipeline/extract"
 	"github.com/andino-agents/knowledge-base/internal/source"
+	"github.com/andino-agents/knowledge-base/internal/source/gitrepo"
 	"github.com/andino-agents/knowledge-base/internal/source/localdir"
 	"github.com/andino-agents/knowledge-base/internal/store"
 )
@@ -31,6 +34,7 @@ type KB struct {
 	Config   *config.KnowledgeBase
 	Store    store.Store
 	Embedder *inference.Embedder
+	Reranker *inference.Reranker // nil when reranking is disabled
 	Indexer  *pipeline.Indexer
 	Sources  []source.Source
 }
@@ -102,13 +106,34 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*App, er
 				}
 				sources = append(sources, src)
 			case "git":
-				logger.Warn("git sources not implemented yet, skipping", "kb", kbCfg.Name, "source", sc.Name)
+				token := ""
+				if sc.TokenEnv != "" {
+					token = os.Getenv(sc.TokenEnv)
+				}
+				cacheDir := filepath.Join(cfg.Server.DataDir, "git", kbCfg.Name+"-"+sc.Name)
+				sources = append(sources, gitrepo.New(sc.Name, sc.URL, sc.Branch, sc.Paths, cacheDir, token, registry.Extensions()))
+			}
+		}
+		var reranker *inference.Reranker
+		if kbCfg.RerankModel != "" {
+			for _, rm := range cfg.Inference.RerankModels {
+				if rm.Name != kbCfg.RerankModel {
+					continue
+				}
+				for _, b := range cfg.Inference.Backends {
+					if b.Name == rm.Backend {
+						reranker = &inference.Reranker{
+							BaseURL: b.BaseURL, APIKey: b.APIKey, Model: rm.Model, Logger: logger,
+						}
+					}
+				}
 			}
 		}
 		a.kbs[kbCfg.Name] = &KB{
 			Config:   kbCfg,
 			Store:    st,
 			Embedder: embedder,
+			Reranker: reranker,
 			Indexer: &pipeline.Indexer{
 				Store:    st,
 				Embedder: embedder,
@@ -198,9 +223,42 @@ func (a *App) Search(ctx context.Context, kbName, query string, limit int, minSc
 	if err != nil {
 		return nil, fmt.Errorf("embedding query: %w", err)
 	}
-	raw, err := kb.Store.HybridSearch(ctx, query, vecs[0], limit)
+
+	// With a reranker configured, fetch a wider candidate pool for it to
+	// reorder; without one, the fused top-limit is the answer.
+	fetchK := limit
+	if kb.Reranker != nil {
+		fetchK = max(limit*4, 24)
+	}
+	raw, err := kb.Store.HybridSearch(ctx, query, vecs[0], fetchK)
 	if err != nil {
 		return nil, err
+	}
+
+	if kb.Reranker != nil && len(raw) > 0 {
+		docs := make([]string, len(raw))
+		for i, h := range raw {
+			docs[i] = h.Text
+		}
+		ranked, err := kb.Reranker.Rerank(ctx, query, docs, limit)
+		if err != nil {
+			// Reranking is an enhancement, unlike embeddings: degrade to
+			// fusion order with a warning instead of failing the query.
+			a.Logger.Warn("rerank failed, falling back to fusion order", "kb", kbName, "error", err)
+		} else {
+			hits := make([]Hit, 0, len(ranked))
+			for _, rk := range ranked {
+				if rk.Score < minScore {
+					continue
+				}
+				hits = append(hits, Hit{Hit: raw[rk.Index], KnowledgeBase: kbName, Relevance: rk.Score})
+			}
+			return hits, nil
+		}
+	}
+
+	if len(raw) > limit {
+		raw = raw[:limit]
 	}
 	hits := make([]Hit, 0, len(raw))
 	for _, h := range raw {

@@ -80,6 +80,7 @@ func runServe(ctx context.Context, cfg *config.Config, wait time.Duration) error
 			a.SetReady(name, nil)
 			logger.Info("knowledge base ready", "kb", name)
 			startWatchers(ctx, name, kb, metrics, logger)
+			startPollers(ctx, name, kb, metrics, logger)
 		}(name, kb)
 	}
 
@@ -135,6 +136,42 @@ func authMCP(cfg *config.Config, next http.Handler) http.Handler {
 		}
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 	})
+}
+
+// startPollers runs a periodic full sync for poll-based sources (git).
+func startPollers(ctx context.Context, kbName string, kb *app.KB, metrics *ops.Metrics, logger *slog.Logger) {
+	for i, src := range kb.Sources {
+		if kb.Config.Sources[i].Type != "git" {
+			continue
+		}
+		interval := kb.Config.Sources[i].PollInterval
+		src := src
+		go func() {
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					stats, err := kb.Indexer.SyncSource(ctx, src)
+					if err != nil {
+						if ctx.Err() == nil {
+							logger.Error("git poll sync failed", "kb", kbName, "source", src.Name(), "error", err)
+						}
+						continue
+					}
+					if stats.Indexed+stats.Deleted > 0 {
+						logger.Info("git poll sync", "kb", kbName, "source", src.Name(),
+							"indexed", stats.Indexed, "deleted", stats.Deleted)
+					}
+					metrics.IndexOps.WithLabelValues(kbName, "indexed").Add(float64(stats.Indexed))
+					metrics.IndexOps.WithLabelValues(kbName, "deleted").Add(float64(stats.Deleted))
+				}
+			}
+		}()
+		logger.Info("polling git source", "kb", kbName, "source", src.Name(), "interval", interval)
+	}
 }
 
 // startWatchers wires each watchable source into the indexer: watcher events

@@ -1,0 +1,13 @@
+# Golden queries for `andino-kb parity`: real questions your users ask, with
+# the documents that must appear in the top-5. Keep YOUR set out of public
+# repos if the paths reveal private content — point --queries anywhere.
+#
+# A query counts as a hit when any top-5 document path contains any `expect`
+# substring. The gate passes when andino's recall >= the legacy system's.
+queries:
+  - query: "how do I force a full reindex"
+    expect: ["operations/runbook"]
+  - query: "what did we decide about the API gateway"
+    expect: ["decisions/adr-012", "decisions/adr-014"]
+  - query: "postgres connection pool exhaustion incident"
+    expect: ["incidents/2026-03-pg-pool"]
