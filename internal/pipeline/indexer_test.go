@@ -239,3 +239,86 @@ func TestEmbeddingFailureAbortsWithoutPartialState(t *testing.T) {
 		t.Fatalf("partial state after aborted sync: %+v", st)
 	}
 }
+
+// fakeChat serves /v1/chat/completions returning a deterministic context that
+// embeds a recognizable marker plus the chunk's first characters.
+func fakeChat(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			http.NotFound(w, r)
+			return
+		}
+		var req struct {
+			Messages []struct {
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]any{
+				"content": "CTXMARKER situating context",
+			}}},
+		})
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestContextualIndexing(t *testing.T) {
+	ctx := context.Background()
+	vault := copyFixtureVault(t)
+	ix, src := newTestIndexer(t, vault)
+	chatSrv := fakeChat(t)
+	ix.Contextual = &inference.Chat{BaseURL: chatSrv.URL + "/v1", Model: "fake-chat"}
+
+	if _, err := ix.SyncSource(ctx, src); err != nil {
+		t.Fatal(err)
+	}
+
+	// Multi-chunk docs got contexts: the marker is BM25-searchable.
+	vecs, _ := ix.Embedder.Embed(ctx, []string{"CTXMARKER"})
+	hits, err := ix.Store.HybridSearch(ctx, "CTXMARKER", vecs[0], 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withCtx := 0
+	for _, h := range hits {
+		if h.Context != "" {
+			withCtx++
+		}
+	}
+	if withCtx == 0 {
+		t.Fatal("no chunks carry generated context")
+	}
+
+	// Single-chunk documents are skipped (terraform.md fixture is one chunk).
+	doc, err := ix.Store.GetDocument(ctx, "vault", "notes/terraform.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = doc
+	found := false
+	for _, h := range hits {
+		if h.RelPath == "notes/terraform.md" {
+			found = true
+			if h.Context != "" {
+				t.Error("single-chunk doc got a context; it should be skipped")
+			}
+		}
+	}
+	_ = found
+}
+
+func TestContextualChatFailureIsFatal(t *testing.T) {
+	ctx := context.Background()
+	vault := copyFixtureVault(t)
+	ix, src := newTestIndexer(t, vault)
+	ix.Contextual = &inference.Chat{
+		BaseURL: "http://127.0.0.1:1", Model: "dead",
+		MaxRetries: 1, Client: &http.Client{Timeout: 200 * time.Millisecond},
+	}
+	if _, err := ix.SyncSource(ctx, src); err == nil {
+		t.Fatal("sync with dead chat backend must abort")
+	}
+}

@@ -47,6 +47,7 @@ type Inference struct {
 	Backends        []Backend        `yaml:"backends"`
 	EmbeddingModels []EmbeddingModel `yaml:"embedding_models"`
 	RerankModels    []RerankModel    `yaml:"rerank_models"`
+	ChatModels      []ChatModel      `yaml:"chat_models"`
 }
 
 type Backend struct {
@@ -70,6 +71,23 @@ type RerankModel struct {
 	Model   string `yaml:"model"`
 }
 
+// ChatModel is a chat-completions model used for index-time work such as
+// contextual retrieval.
+type ChatModel struct {
+	Name      string `yaml:"name"`
+	Backend   string `yaml:"backend"`
+	Model     string `yaml:"model"`
+	MaxTokens int    `yaml:"max_tokens"`
+}
+
+// Contextual enables contextual retrieval for a knowledge base: an LLM
+// generates a short situating context per chunk at index time, which is
+// embedded and BM25-indexed alongside the text.
+type Contextual struct {
+	Enabled bool   `yaml:"enabled"`
+	Model   string `yaml:"model"` // ref into inference.chat_models
+}
+
 type Chunking struct {
 	Strategy      string `yaml:"strategy"`
 	MaxTokens     int    `yaml:"max_tokens"`
@@ -83,13 +101,14 @@ type Defaults struct {
 }
 
 type KnowledgeBase struct {
-	Name           string    `yaml:"name"`
-	Description    string    `yaml:"description"`
-	Writable       bool      `yaml:"writable"`
-	Sources        []Source  `yaml:"sources"`
-	Chunking       *Chunking `yaml:"chunking"`
-	EmbeddingModel string    `yaml:"embedding_model"`
-	RerankModel    string    `yaml:"rerank_model"`
+	Name           string      `yaml:"name"`
+	Description    string      `yaml:"description"`
+	Writable       bool        `yaml:"writable"`
+	Sources        []Source    `yaml:"sources"`
+	Chunking       *Chunking   `yaml:"chunking"`
+	EmbeddingModel string      `yaml:"embedding_model"`
+	RerankModel    string      `yaml:"rerank_model"`
+	Contextual     *Contextual `yaml:"contextual"`
 }
 
 // Source is a single ingestion pipeline. Type-specific fields are flat; the
@@ -165,6 +184,11 @@ func (c *Config) applyDefaults() {
 		}
 		if m.MaxRetries == 0 {
 			m.MaxRetries = 4
+		}
+	}
+	for i := range c.Inference.ChatModels {
+		if c.Inference.ChatModels[i].MaxTokens == 0 {
+			c.Inference.ChatModels[i].MaxTokens = 200
 		}
 	}
 	for i := range c.Server.APIKeys {
@@ -250,6 +274,16 @@ func (c *Config) Validate() error {
 		}
 		rerankModels[m.Name] = true
 	}
+	chatModels := map[string]bool{}
+	for _, m := range c.Inference.ChatModels {
+		if m.Name == "" || m.Model == "" {
+			return fmt.Errorf("inference.chat_models: name and model are required")
+		}
+		if !backends[m.Backend] {
+			return fmt.Errorf("inference.chat_models[%s]: unknown backend %q", m.Name, m.Backend)
+		}
+		chatModels[m.Name] = true
+	}
 
 	if len(c.KnowledgeBases) == 0 {
 		return fmt.Errorf("at least one knowledge base is required")
@@ -268,6 +302,9 @@ func (c *Config) Validate() error {
 		}
 		if kb.RerankModel != "" && !rerankModels[kb.RerankModel] {
 			return fmt.Errorf("knowledge_bases[%s]: unknown rerank_model %q", kb.Name, kb.RerankModel)
+		}
+		if kb.Contextual != nil && kb.Contextual.Enabled && !chatModels[kb.Contextual.Model] {
+			return fmt.Errorf("knowledge_bases[%s]: contextual.model %q not found in inference.chat_models", kb.Name, kb.Contextual.Model)
 		}
 		if len(kb.Sources) == 0 && !kb.Writable {
 			return fmt.Errorf("knowledge_bases[%s]: needs at least one source or writable: true", kb.Name)
@@ -323,6 +360,23 @@ func validateSource(kb string, s Source) error {
 		return fmt.Errorf("%s: unknown type %q (localdir | git)", prefix, s.Type)
 	}
 	return nil
+}
+
+// ChatModelFor resolves a KB's contextual chat model definition.
+func (c *Config) ChatModelFor(kb *KnowledgeBase) (ChatModel, Backend, error) {
+	if kb.Contextual == nil {
+		return ChatModel{}, Backend{}, fmt.Errorf("config: kb %q has no contextual section", kb.Name)
+	}
+	for _, m := range c.Inference.ChatModels {
+		if m.Name == kb.Contextual.Model {
+			for _, b := range c.Inference.Backends {
+				if b.Name == m.Backend {
+					return m, b, nil
+				}
+			}
+		}
+	}
+	return ChatModel{}, Backend{}, fmt.Errorf("config: chat model %q not found for kb %q", kb.Contextual.Model, kb.Name)
 }
 
 // EmbeddingModelFor resolves a KB's embedding model definition.

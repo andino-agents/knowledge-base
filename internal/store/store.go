@@ -33,6 +33,7 @@ type Chunk struct {
 	StartLine   int
 	EndLine     int
 	Text        string
+	Context     string // LLM-generated situating context (contextual retrieval)
 	TokenEst    int
 }
 
@@ -54,6 +55,7 @@ type Hit struct {
 	StartLine   int     `json:"start_line"`
 	EndLine     int     `json:"end_line"`
 	Text        string  `json:"text"`
+	Context     string  `json:"context,omitempty"`
 	Score       float64 `json:"score"`              // fused (RRF) or reranked score, higher is better
 	FTSRank     int     `json:"fts_rank,omitempty"` // 1-based rank in the keyword result list, 0 if absent
 	VecRank     int     `json:"vec_rank,omitempty"` // 1-based rank in the vector result list, 0 if absent

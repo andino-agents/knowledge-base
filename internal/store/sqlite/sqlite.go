@@ -225,14 +225,14 @@ func (s *sqliteStore) UpsertDocument(ctx context.Context, doc store.Document, ch
 	}
 
 	insChunk, err := tx.PrepareContext(ctx, `
-		INSERT INTO chunks(document_id, seq, heading_path, start_line, end_line, text, token_est)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`)
+		INSERT INTO chunks(document_id, seq, heading_path, start_line, end_line, text, context, token_est)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
 	defer insChunk.Close()
 	insFTS, err := tx.PrepareContext(ctx,
-		"INSERT INTO chunks_fts(rowid, text, heading_path) VALUES (?, ?, ?)")
+		"INSERT INTO chunks_fts(rowid, text, heading_path, context) VALUES (?, ?, ?, ?)")
 	if err != nil {
 		return err
 	}
@@ -246,7 +246,7 @@ func (s *sqliteStore) UpsertDocument(ctx context.Context, doc store.Document, ch
 
 	addedIDs := make([]int64, len(chunks))
 	for i, c := range chunks {
-		res, err := insChunk.ExecContext(ctx, docID, c.Seq, c.HeadingPath, c.StartLine, c.EndLine, c.Text, c.TokenEst)
+		res, err := insChunk.ExecContext(ctx, docID, c.Seq, c.HeadingPath, c.StartLine, c.EndLine, c.Text, c.Context, c.TokenEst)
 		if err != nil {
 			return fmt.Errorf("sqlite: inserting chunk %d of %s: %w", c.Seq, doc.RelPath, err)
 		}
@@ -254,7 +254,7 @@ func (s *sqliteStore) UpsertDocument(ctx context.Context, doc store.Document, ch
 		if err != nil {
 			return err
 		}
-		if _, err := insFTS.ExecContext(ctx, chunkID, c.Text, c.HeadingPath); err != nil {
+		if _, err := insFTS.ExecContext(ctx, chunkID, c.Text, c.HeadingPath, c.Context); err != nil {
 			return fmt.Errorf("sqlite: indexing chunk %d of %s in FTS: %w", c.Seq, doc.RelPath, err)
 		}
 		if _, err := insVec.ExecContext(ctx, chunkID, encodeVec(embeddings[i])); err != nil {
@@ -328,18 +328,18 @@ func deleteDocumentTx(ctx context.Context, tx *sql.Tx, sourceName, relPath strin
 	}
 
 	rows, err := tx.QueryContext(ctx,
-		"SELECT id, text, heading_path FROM chunks WHERE document_id = ?", docID)
+		"SELECT id, text, heading_path, context FROM chunks WHERE document_id = ?", docID)
 	if err != nil {
 		return nil, err
 	}
 	type ftsRow struct {
-		id            int64
-		text, heading string
+		id                    int64
+		text, heading, extCtx string
 	}
 	var old []ftsRow
 	for rows.Next() {
 		var r ftsRow
-		if err := rows.Scan(&r.id, &r.text, &r.heading); err != nil {
+		if err := rows.Scan(&r.id, &r.text, &r.heading, &r.extCtx); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -353,8 +353,8 @@ func deleteDocumentTx(ctx context.Context, tx *sql.Tx, sourceName, relPath strin
 	ids := make([]int64, 0, len(old))
 	for _, r := range old {
 		if _, err := tx.ExecContext(ctx,
-			"INSERT INTO chunks_fts(chunks_fts, rowid, text, heading_path) VALUES ('delete', ?, ?, ?)",
-			r.id, r.text, r.heading); err != nil {
+			"INSERT INTO chunks_fts(chunks_fts, rowid, text, heading_path, context) VALUES ('delete', ?, ?, ?, ?)",
+			r.id, r.text, r.heading, r.extCtx); err != nil {
 			return nil, fmt.Errorf("sqlite: removing chunk %d from FTS: %w", r.id, err)
 		}
 		ids = append(ids, r.id)

@@ -28,7 +28,51 @@ type Indexer struct {
 	Embedder *inference.Embedder
 	Registry *extract.Registry
 	Chunking config.Chunking
-	Logger   *slog.Logger
+	// Contextual, when set, enables contextual retrieval: an LLM writes a
+	// short situating context per chunk at index time.
+	Contextual *inference.Chat
+	Logger     *slog.Logger
+}
+
+// contextualDocBudget bounds how much of the source document is shown to the
+// context model, in estimated tokens. Documents longer than this are
+// truncated for the prompt (the chunks themselves are never truncated).
+const contextualDocBudget = 8000
+
+const contextualSystemPrompt = "You situate document chunks for search retrieval. " +
+	"Answer only with the requested context, nothing else."
+
+// contextualUserPrompt builds the per-chunk prompt. The document comes FIRST
+// and identically for every chunk of the same document, so an inference
+// server with prefix caching pays the document's prompt cost once.
+func contextualUserPrompt(docText, chunkText string) string {
+	return "<document>\n" + docText + "\n</document>\n\n" +
+		"Here is the chunk we want to situate within the whole document:\n" +
+		"<chunk>\n" + chunkText + "\n</chunk>\n\n" +
+		"Give a short succinct context (1-2 sentences) situating this chunk within the overall document " +
+		"to improve search retrieval of the chunk. Write in the same language as the document. " +
+		"Answer only with the succinct context."
+}
+
+// contextualize fills chunk.Context for every chunk. Single-chunk documents
+// are skipped: the chunk IS the document, a generated context adds noise.
+func (ix *Indexer) contextualize(ctx context.Context, title string, content []byte, chunks []store.Chunk) error {
+	if ix.Contextual == nil || len(chunks) < 2 {
+		return nil
+	}
+	docText := title + "\n\n" + string(content)
+	if est := chunk.Estimate(docText); est > contextualDocBudget {
+		docText = docText[:contextualDocBudget*chunk.CharsPerToken]
+	}
+	for i := range chunks {
+		text, err := ix.Contextual.Complete(ctx, contextualSystemPrompt,
+			contextualUserPrompt(docText, chunks[i].Text))
+		if err != nil {
+			return err
+		}
+		chunks[i].Context = text
+	}
+	return nil
 }
 
 type SyncStats struct {
@@ -175,6 +219,15 @@ func (ix *Indexer) indexFile(ctx context.Context, src source.Source, relPath str
 		return false, ix.Store.TouchManifest(ctx, src.Name(), relPath, state)
 	}
 
+	title := doc.Title
+	if title == "" {
+		title = strings.TrimSuffix(path.Base(relPath), path.Ext(relPath))
+	}
+
+	if err := ix.contextualize(ctx, title, content, chunks); err != nil {
+		return false, fatalError{fmt.Errorf("contextualizing %s: %w", relPath, err)}
+	}
+
 	texts := make([]string, len(chunks))
 	for i, c := range chunks {
 		texts[i] = embeddingText(c)
@@ -182,11 +235,6 @@ func (ix *Indexer) indexFile(ctx context.Context, src source.Source, relPath str
 	embeddings, err := ix.Embedder.Embed(ctx, texts)
 	if err != nil {
 		return false, fatalError{fmt.Errorf("embedding %s: %w", relPath, err)}
-	}
-
-	title := doc.Title
-	if title == "" {
-		title = strings.TrimSuffix(path.Base(relPath), path.Ext(relPath))
 	}
 	return true, ix.Store.UpsertDocument(ctx, store.Document{
 		SourceName: src.Name(),
@@ -238,13 +286,21 @@ func (ix *Indexer) IndexManaged(ctx context.Context, kbName, id, title, content 
 	}, chunks, embeddings)
 }
 
-// embeddingText is what actually gets embedded for a chunk: the heading
-// context prefixed to the text, so section semantics survive chunking.
+// embeddingText is what actually gets embedded for a chunk: the generated
+// context and heading path prefixed to the text, so document semantics
+// survive chunking (contextual embeddings).
 func embeddingText(c store.Chunk) string {
-	if c.HeadingPath == "" {
-		return c.Text
+	var b strings.Builder
+	if c.Context != "" {
+		b.WriteString(c.Context)
+		b.WriteString("\n\n")
 	}
-	return c.HeadingPath + "\n\n" + c.Text
+	if c.HeadingPath != "" {
+		b.WriteString(c.HeadingPath)
+		b.WriteString("\n\n")
+	}
+	b.WriteString(c.Text)
+	return b.String()
 }
 
 func readFile(ctx context.Context, src source.Source, relPath string) ([]byte, error) {

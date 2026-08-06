@@ -129,17 +129,33 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*App, er
 				}
 			}
 		}
+		var contextual *inference.Chat
+		if kbCfg.Contextual != nil && kbCfg.Contextual.Enabled {
+			chatModel, chatBackend, err := cfg.ChatModelFor(kbCfg)
+			if err != nil {
+				a.Close()
+				return nil, err
+			}
+			contextual = &inference.Chat{
+				BaseURL:   chatBackend.BaseURL,
+				APIKey:    chatBackend.APIKey,
+				Model:     chatModel.Model,
+				MaxTokens: chatModel.MaxTokens,
+				Logger:    logger,
+			}
+		}
 		a.kbs[kbCfg.Name] = &KB{
 			Config:   kbCfg,
 			Store:    st,
 			Embedder: embedder,
 			Reranker: reranker,
 			Indexer: &pipeline.Indexer{
-				Store:    st,
-				Embedder: embedder,
-				Registry: registry,
-				Chunking: *kbCfg.Chunking,
-				Logger:   logger,
+				Store:      st,
+				Embedder:   embedder,
+				Registry:   registry,
+				Chunking:   *kbCfg.Chunking,
+				Contextual: contextual,
+				Logger:     logger,
 			},
 			Sources: sources,
 		}
