@@ -1,0 +1,17 @@
+# Example systemd unit for andino-kb (user service).
+# Install: cp to ~/.config/systemd/user/, systemctl --user daemon-reload,
+#          systemctl --user enable --now andino-kb
+# For system-wide installs adapt paths and add hardening
+# (ProtectSystem=strict, ReadWritePaths=<data_dir>, ReadOnlyPaths=<sources>).
+[Unit]
+Description=andino-kb (knowledge bases for AI agents, REST+MCP)
+After=network-online.target
+
+[Service]
+EnvironmentFile=%h/.config/andino-kb/env
+ExecStart=%h/.local/bin/andino-kb serve --config %h/.config/andino-kb/config.yaml
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

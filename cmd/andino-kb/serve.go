@@ -4,18 +4,23 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
 
 	"github.com/andino-agents/knowledge-base/internal/app"
 	"github.com/andino-agents/knowledge-base/internal/config"
+	"github.com/andino-agents/knowledge-base/internal/mcpserver"
 	"github.com/andino-agents/knowledge-base/internal/ops"
 	"github.com/andino-agents/knowledge-base/internal/restapi"
+	"github.com/andino-agents/knowledge-base/internal/source"
 )
 
 func serveCmd(configPath *string) *cobra.Command {
@@ -74,12 +79,17 @@ func runServe(ctx context.Context, cfg *config.Config, wait time.Duration) error
 			}
 			a.SetReady(name, nil)
 			logger.Info("knowledge base ready", "kb", name)
+			startWatchers(ctx, name, kb, metrics, logger)
 		}(name, kb)
 	}
 
 	mux := http.NewServeMux()
 	rest := restapi.New(a, logger)
 	mux.Handle("/v1/", rest.Handler())
+	mux.Handle("/mcp", authMCP(cfg, mcp.NewStreamableHTTPHandler(
+		func(*http.Request) *mcp.Server { return mcpserver.New(a, version) },
+		&mcp.StreamableHTTPOptions{Stateless: true},
+	)))
 	ops.Register(mux, a, metrics)
 
 	srv := &http.Server{
@@ -104,4 +114,83 @@ func runServe(ctx context.Context, cfg *config.Config, wait time.Duration) error
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancelShutdown()
 	return srv.Shutdown(shutdownCtx)
+}
+
+// authMCP guards the MCP endpoint with the same bearer keys as the REST API.
+// Any valid key grants tool access; write tools re-check writability in the
+// app layer. Without configured keys the endpoint is open (localhost use).
+func authMCP(cfg *config.Config, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		keys := cfg.Server.APIKeys
+		if len(keys) == 0 {
+			next.ServeHTTP(w, r)
+			return
+		}
+		auth := r.Header.Get("Authorization")
+		for _, k := range keys {
+			if auth == "Bearer "+k.Key {
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	})
+}
+
+// startWatchers wires each watchable source into the indexer: watcher events
+// mark a path dirty, a per-path debounce timer absorbs editor bursts, and on
+// fire SyncPath re-examines reality (reindex or delete).
+func startWatchers(ctx context.Context, kbName string, kb *app.KB, metrics *ops.Metrics, logger *slog.Logger) {
+	for i, src := range kb.Sources {
+		w, ok := src.(source.Watchable)
+		if !ok {
+			continue
+		}
+		srcCfg := kb.Config.Sources[i]
+		if !srcCfg.Watch {
+			continue
+		}
+		debounce := time.Duration(srcCfg.DebounceMS) * time.Millisecond
+		src := src
+		go func() {
+			dirty := make(chan string, 256)
+			go func() {
+				if err := w.Watch(ctx, dirty); err != nil && ctx.Err() == nil {
+					logger.Error("watcher stopped", "kb", kbName, "source", src.Name(), "error", err)
+				}
+			}()
+
+			var (
+				mu     sync.Mutex
+				timers = map[string]*time.Timer{}
+			)
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case rel := <-dirty:
+					metrics.WatcherEvents.WithLabelValues(kbName, src.Name()).Inc()
+					mu.Lock()
+					if t, ok := timers[rel]; ok {
+						t.Reset(debounce)
+					} else {
+						timers[rel] = time.AfterFunc(debounce, func() {
+							mu.Lock()
+							delete(timers, rel)
+							mu.Unlock()
+							if err := kb.Indexer.SyncPath(ctx, src, rel); err != nil && ctx.Err() == nil {
+								logger.Error("watch resync failed", "kb", kbName, "source", src.Name(), "path", rel, "error", err)
+								metrics.IndexOps.WithLabelValues(kbName, "failed").Inc()
+								return
+							}
+							logger.Info("watch resync", "kb", kbName, "source", src.Name(), "path", rel)
+							metrics.IndexOps.WithLabelValues(kbName, "indexed").Inc()
+						})
+					}
+					mu.Unlock()
+				}
+			}
+		}()
+		logger.Info("watching source", "kb", kbName, "source", src.Name(), "debounce", debounce)
+	}
 }
