@@ -54,6 +54,27 @@ func TestRerankAgainstMockedLlamaServer(t *testing.T) {
 	}
 }
 
+// Backends like llama.cpp's Qwen3 reranker already return probabilities in
+// [0,1]; those must pass through untouched (sigmoid would compress them into
+// 0.5-0.73 and break min_score filtering).
+func TestRerankKeepsProbabilityScores(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"results": []map[string]any{
+			{"index": 0, "relevance_score": 0.999},
+			{"index": 1, "relevance_score": 0.0},
+		}})
+	}))
+	defer srv.Close()
+	r := &Reranker{BaseURL: srv.URL + "/v1", Model: "mock"}
+	ranked, err := r.Rerank(context.Background(), "q", []string{"a", "b"}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ranked[0].Score != 0.999 || ranked[1].Score != 0.0 {
+		t.Errorf("probability scores were altered: %+v", ranked)
+	}
+}
+
 func TestRerankErrorsPropagate(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "model not loaded", http.StatusServiceUnavailable)

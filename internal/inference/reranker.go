@@ -80,12 +80,26 @@ func (r *Reranker) Rerank(ctx context.Context, query string, documents []string,
 	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
 		return nil, fmt.Errorf("rerank: decoding response: %w", err)
 	}
+	// Backends disagree on score ranges: llama.cpp's Qwen3 reranker returns
+	// P(yes) already in [0,1], while cross-encoders elsewhere return raw
+	// logits. Normalize with sigmoid only when scores fall outside [0,1].
+	needSigmoid := false
+	for _, res := range parsed.Results {
+		if res.RelevanceScore < 0 || res.RelevanceScore > 1 {
+			needSigmoid = true
+			break
+		}
+	}
 	out := make([]Ranked, 0, len(parsed.Results))
 	for _, res := range parsed.Results {
 		if res.Index < 0 || res.Index >= len(documents) {
 			return nil, fmt.Errorf("rerank: out-of-range index %d", res.Index)
 		}
-		out = append(out, Ranked{Index: res.Index, Score: sigmoid(res.RelevanceScore)})
+		score := res.RelevanceScore
+		if needSigmoid {
+			score = sigmoid(score)
+		}
+		out = append(out, Ranked{Index: res.Index, Score: score})
 	}
 	// Endpoints are supposed to return best-first, but do not rely on it.
 	for i := 1; i < len(out); i++ {
