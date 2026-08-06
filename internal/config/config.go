@@ -107,14 +107,18 @@ type Defaults struct {
 }
 
 type KnowledgeBase struct {
-	Name           string      `yaml:"name"`
-	Description    string      `yaml:"description"`
-	Writable       bool        `yaml:"writable"`
-	Sources        []Source    `yaml:"sources"`
-	Chunking       *Chunking   `yaml:"chunking"`
-	EmbeddingModel string      `yaml:"embedding_model"`
-	RerankModel    string      `yaml:"rerank_model"`
-	Contextual     *Contextual `yaml:"contextual"`
+	Name           string    `yaml:"name"`
+	Description    string    `yaml:"description"`
+	Writable       bool      `yaml:"writable"`
+	Sources        []Source  `yaml:"sources"`
+	Chunking       *Chunking `yaml:"chunking"`
+	EmbeddingModel string    `yaml:"embedding_model"`
+	RerankModel    string    `yaml:"rerank_model"`
+	// RerankDefault decides whether searches rerank when no per-request
+	// override is given: "on" (default) or "off". With "off" the reranker
+	// stays available to requests that ask for rerank: true.
+	RerankDefault string      `yaml:"rerank_default"`
+	Contextual    *Contextual `yaml:"contextual"`
 }
 
 // Source is a single ingestion pipeline. Type-specific fields are flat; the
@@ -308,6 +312,9 @@ func (c *Config) Validate() error {
 		}
 		if kb.RerankModel != "" && !rerankModels[kb.RerankModel] {
 			return fmt.Errorf("knowledge_bases[%s]: unknown rerank_model %q", kb.Name, kb.RerankModel)
+		}
+		if kb.RerankDefault != "" && kb.RerankDefault != "on" && kb.RerankDefault != "off" {
+			return fmt.Errorf("knowledge_bases[%s]: rerank_default %q must be on or off", kb.Name, kb.RerankDefault)
 		}
 		if kb.Contextual != nil && kb.Contextual.Enabled && !chatModels[kb.Contextual.Model] {
 			return fmt.Errorf("knowledge_bases[%s]: contextual.model %q not found in inference.chat_models", kb.Name, kb.Contextual.Model)

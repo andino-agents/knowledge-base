@@ -55,6 +55,9 @@ knowledge_bases:
     # contextual:
     #   enabled: true
     #   model: local-chat
+    # With contextual retrieval, reranking may add little; keep it available
+    # per-request only:
+    # rerank_default: "off"
     sources:
       - name: vault
         type: localdir

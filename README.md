@@ -145,6 +145,21 @@ know intimately. They are design requirements here:
   reindexing, and a "no changes" answer is cross-checked against a non-empty
   index.
 
+**Measured on a real 238-document knowledge base** (40 golden queries,
+document-level metrics, local llama.cpp inference):
+
+| Configuration | recall@1 | recall@5 | MRR | p50 latency |
+|---|---|---|---|---|
+| Hybrid (BM25 + vectors + RRF) | 75% | 98% | 0.848 | 24 ms |
+| + cross-encoder rerank | 82% | 98% | 0.884 | ~850 ms |
+| + **contextual retrieval** (no rerank) | **88%** | **98%** | **0.908** | **26 ms** |
+
+Contextual retrieval lifted recall@1 by 13 points over plain hybrid — and
+made reranking unnecessary for this corpus (`rerank_default: "off"` keeps
+the reranker available per-request). Measure your own corpus with
+`andino-kb eval`; retrieval changes here get gated on those numbers, not
+vibes.
+
 Vector search is a brute-force cosine scan held in memory (embeddings
 persist as BLOBs in SQLite). At the supported scale — up to ~100k chunks per
 KB — that is single-digit milliseconds in pure Go with zero moving parts;

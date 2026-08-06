@@ -260,7 +260,9 @@ func (a *App) Search(ctx context.Context, kbName, query string, opts SearchOpts)
 		limit = 8
 	}
 	minScore := opts.MinScore
-	useRerank := kb.Reranker != nil && (opts.Rerank == nil || *opts.Rerank)
+	rerankByDefault := kb.Config.RerankDefault != "off"
+	useRerank := kb.Reranker != nil &&
+		((opts.Rerank == nil && rerankByDefault) || (opts.Rerank != nil && *opts.Rerank))
 	maxPerDoc := opts.MaxPerDoc
 	if maxPerDoc == 0 {
 		maxPerDoc = defaultMaxPerDoc
