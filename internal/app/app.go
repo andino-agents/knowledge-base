@@ -237,6 +237,9 @@ type SearchOpts struct {
 	// MaxPerDoc caps how many chunks of the same document appear in the
 	// results. 0 = the default cap (2); negative = no cap.
 	MaxPerDoc int
+	// Filter keeps only documents whose metadata contains every given
+	// key/value pair (AND semantics).
+	Filter map[string]string
 }
 
 // defaultMaxPerDoc keeps result lists diverse by default: without a cap one
@@ -282,6 +285,9 @@ func (a *App) Search(ctx context.Context, kbName, query string, opts SearchOpts)
 	raw, err := kb.Store.HybridSearch(ctx, query, vecs[0], fetchK)
 	if err != nil {
 		return nil, err
+	}
+	if len(opts.Filter) > 0 {
+		raw = filterByMetadata(raw, opts.Filter)
 	}
 
 	if useRerank && len(raw) > 0 {
@@ -372,6 +378,24 @@ func (a *App) SearchAll(ctx context.Context, query string, opts SearchOpts) ([]H
 	return all, nil
 }
 
+// filterByMetadata keeps hits whose document metadata matches every pair.
+func filterByMetadata(hits []store.Hit, filter map[string]string) []store.Hit {
+	out := hits[:0]
+	for _, h := range hits {
+		ok := true
+		for k, v := range filter {
+			if h.Metadata[k] != v {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
 // capPerDocument keeps at most n chunks per document, preserving order.
 // Retrieval budgets are small; without a cap one strong document can crowd
 // every other source out of the results an agent sees.
@@ -390,7 +414,7 @@ func capPerDocument(hits []store.Hit, n int) []store.Hit {
 
 // StoreDocument writes agent-provided content into a writable KB and indexes
 // it synchronously. The returned id follows the strands memory convention.
-func (a *App) StoreDocument(ctx context.Context, kbName, title, content string) (string, error) {
+func (a *App) StoreDocument(ctx context.Context, kbName, title, content string, metadata map[string]string) (string, error) {
 	kb, err := a.KB(kbName)
 	if err != nil {
 		return "", err
@@ -406,7 +430,7 @@ func (a *App) StoreDocument(ctx context.Context, kbName, title, content string) 
 		return "", err
 	}
 	id := fmt.Sprintf("memory_%s_%s", time.Now().UTC().Format("20060102_150405"), hex.EncodeToString(rnd[:]))
-	if err := kb.Indexer.IndexManaged(ctx, kbName, id, title, content); err != nil {
+	if err := kb.Indexer.IndexManaged(ctx, kbName, id, title, content, metadata); err != nil {
 		return "", err
 	}
 	return id, nil

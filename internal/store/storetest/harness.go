@@ -35,6 +35,7 @@ func doc(source, relPath, title string) store.Document {
 		SHA256:     "sha-" + relPath,
 		SizeBytes:  100,
 		MtimeUnix:  1700000000,
+		Metadata:   map[string]string{"origin": "harness", "path": relPath},
 	}
 }
 
@@ -59,6 +60,9 @@ func TestStore(t *testing.T, s store.Store) {
 		if got.Document.Title != "Alpha" {
 			t.Errorf("title = %q, want Alpha", got.Document.Title)
 		}
+		if got.Document.Metadata["origin"] != "harness" {
+			t.Errorf("metadata lost on round-trip: %v", got.Document.Metadata)
+		}
 		if got.Text == "" {
 			t.Error("empty reassembled text")
 		}
@@ -76,6 +80,9 @@ func TestStore(t *testing.T, s store.Store) {
 		for _, h := range hits {
 			if h.RelPath == "notes/alpha.md" && h.FTSRank > 0 {
 				found = true
+				if h.Metadata["origin"] != "harness" {
+					t.Errorf("hit missing metadata: %v", h.Metadata)
+				}
 			}
 		}
 		if !found {

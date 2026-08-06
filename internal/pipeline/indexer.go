@@ -280,7 +280,7 @@ func (ix *Indexer) indexFile(ctx context.Context, src source.Source, relPath str
 
 // IndexManaged indexes agent-provided content into the reserved "managed"
 // source of a writable knowledge base. Content is treated as markdown.
-func (ix *Indexer) IndexManaged(ctx context.Context, kbName, id, title, content string) error {
+func (ix *Indexer) IndexManaged(ctx context.Context, kbName, id, title, content string, metadata map[string]string) error {
 	doc, err := extract.Markdown{}.Extract(id+".md", strings.NewReader(content))
 	if err != nil {
 		return err
@@ -314,6 +314,7 @@ func (ix *Indexer) IndexManaged(ctx context.Context, kbName, id, title, content 
 		SHA256:     hex.EncodeToString(sum[:]),
 		SizeBytes:  int64(len(content)),
 		MtimeUnix:  now,
+		Metadata:   metadata,
 	}, chunks, embeddings)
 }
 

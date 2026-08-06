@@ -107,7 +107,7 @@ func TestWriteFlowEndToEnd(t *testing.T) {
 
 	// store
 	resp, body := do(t, "POST", srv.URL+"/v1/kb/memory/documents", "",
-		`{"title":"Deploy preference","content":"User prefers systemd user units with linger."}`)
+		`{"title":"Deploy preference","content":"User prefers systemd user units with linger.","metadata":{"agent":"ruben","topic":"deploy"}}`)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("store status = %d (%v)", resp.StatusCode, body)
 	}
@@ -129,6 +129,22 @@ func TestWriteFlowEndToEnd(t *testing.T) {
 	first := results[0].(map[string]any)
 	if first["rel_path"] != id {
 		t.Errorf("top hit = %v, want %s", first["rel_path"], id)
+	}
+	meta, _ := first["metadata"].(map[string]any)
+	if meta == nil || meta["agent"] != "ruben" {
+		t.Errorf("hit metadata = %v, want agent=ruben", first["metadata"])
+	}
+
+	// metadata filter: matching filter finds it, non-matching does not
+	resp, body = do(t, "POST", srv.URL+"/v1/kb/memory/search", "",
+		`{"query":"systemd preference","filter":{"agent":"ruben"}}`)
+	if resp.StatusCode != http.StatusOK || len(body["results"].([]any)) == 0 {
+		t.Fatalf("filtered search missed the doc: %v", body)
+	}
+	resp, body = do(t, "POST", srv.URL+"/v1/kb/memory/search", "",
+		`{"query":"systemd preference","filter":{"agent":"otro"}}`)
+	if resp.StatusCode != http.StatusOK || len(body["results"].([]any)) != 0 {
+		t.Fatalf("non-matching filter returned results: %v", body)
 	}
 
 	// get by id

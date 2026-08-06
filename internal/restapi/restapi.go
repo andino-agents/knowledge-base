@@ -133,15 +133,16 @@ func (s *Server) getKB(w http.ResponseWriter, r *http.Request) {
 }
 
 type searchRequest struct {
-	Query     string  `json:"query"`
-	Limit     int     `json:"limit"`
-	MinScore  float64 `json:"min_score"`
-	Rerank    *bool   `json:"rerank"`      // nil = KB default
-	MaxPerDoc int     `json:"max_per_doc"` // 0 = default (2), negative = no cap
+	Query     string            `json:"query"`
+	Limit     int               `json:"limit"`
+	MinScore  float64           `json:"min_score"`
+	Rerank    *bool             `json:"rerank"`      // nil = KB default
+	MaxPerDoc int               `json:"max_per_doc"` // 0 = default (2), negative = no cap
+	Filter    map[string]string `json:"filter"`      // metadata equality, AND
 }
 
 func (r searchRequest) opts() app.SearchOpts {
-	return app.SearchOpts{Limit: r.Limit, MinScore: r.MinScore, Rerank: r.Rerank, MaxPerDoc: r.MaxPerDoc}
+	return app.SearchOpts{Limit: r.Limit, MinScore: r.MinScore, Rerank: r.Rerank, MaxPerDoc: r.MaxPerDoc, Filter: r.Filter}
 }
 
 func (s *Server) searchKB(w http.ResponseWriter, r *http.Request) {
@@ -234,7 +235,7 @@ func (s *Server) getDocument(w http.ResponseWriter, r *http.Request) {
 type storeRequest struct {
 	Content  string            `json:"content"`
 	Title    string            `json:"title"`
-	Metadata map[string]string `json:"metadata"` // reserved; not persisted yet
+	Metadata map[string]string `json:"metadata"`
 }
 
 func (s *Server) storeDocument(w http.ResponseWriter, r *http.Request) {
@@ -243,7 +244,7 @@ func (s *Server) storeDocument(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	id, err := s.App.StoreDocument(r.Context(), r.PathValue("kb"), req.Title, req.Content)
+	id, err := s.App.StoreDocument(r.Context(), r.PathValue("kb"), req.Title, req.Content, req.Metadata)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return

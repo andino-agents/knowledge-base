@@ -24,6 +24,9 @@ type Document struct {
 	SHA256     string `json:"content_sha256"`
 	SizeBytes  int64  `json:"size_bytes"`
 	MtimeUnix  int64  `json:"mtime_unix"`
+	// Metadata is a flat string map attached to the document (agent writes,
+	// source annotations). Filterable at search time.
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 // Chunk is a retrievable slice of a document.
@@ -46,19 +49,20 @@ type FileState struct {
 
 // Hit is one hybrid search result.
 type Hit struct {
-	DocumentID  int64   `json:"document_id"`
-	SourceName  string  `json:"source"`
-	RelPath     string  `json:"rel_path"`
-	URI         string  `json:"uri"`
-	Title       string  `json:"title"`
-	HeadingPath string  `json:"heading_path,omitempty"`
-	StartLine   int     `json:"start_line"`
-	EndLine     int     `json:"end_line"`
-	Text        string  `json:"text"`
-	Context     string  `json:"context,omitempty"`
-	Score       float64 `json:"score"`              // fused (RRF) or reranked score, higher is better
-	FTSRank     int     `json:"fts_rank,omitempty"` // 1-based rank in the keyword result list, 0 if absent
-	VecRank     int     `json:"vec_rank,omitempty"` // 1-based rank in the vector result list, 0 if absent
+	DocumentID  int64             `json:"document_id"`
+	SourceName  string            `json:"source"`
+	RelPath     string            `json:"rel_path"`
+	URI         string            `json:"uri"`
+	Title       string            `json:"title"`
+	HeadingPath string            `json:"heading_path,omitempty"`
+	StartLine   int               `json:"start_line"`
+	EndLine     int               `json:"end_line"`
+	Text        string            `json:"text"`
+	Context     string            `json:"context,omitempty"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
+	Score       float64           `json:"score"`              // fused (RRF) or reranked score, higher is better
+	FTSRank     int               `json:"fts_rank,omitempty"` // 1-based rank in the keyword result list, 0 if absent
+	VecRank     int               `json:"vec_rank,omitempty"` // 1-based rank in the vector result list, 0 if absent
 }
 
 // Stats summarizes a knowledge base.

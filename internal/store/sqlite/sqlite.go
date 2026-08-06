@@ -11,6 +11,7 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -212,10 +213,14 @@ func (s *sqliteStore) UpsertDocument(ctx context.Context, doc store.Document, ch
 		return err
 	}
 
+	metaJSON, err := json.Marshal(orEmpty(doc.Metadata))
+	if err != nil {
+		return fmt.Errorf("sqlite: marshaling metadata for %s: %w", doc.RelPath, err)
+	}
 	res, err := tx.ExecContext(ctx, `
-		INSERT INTO documents(source_name, rel_path, uri, title, content_sha256, size_bytes, mtime_unix, indexed_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		doc.SourceName, doc.RelPath, doc.URI, doc.Title, doc.SHA256, doc.SizeBytes, doc.MtimeUnix, time.Now().Unix())
+		INSERT INTO documents(source_name, rel_path, uri, title, content_sha256, size_bytes, mtime_unix, indexed_at, metadata)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		doc.SourceName, doc.RelPath, doc.URI, doc.Title, doc.SHA256, doc.SizeBytes, doc.MtimeUnix, time.Now().Unix(), string(metaJSON))
 	if err != nil {
 		return fmt.Errorf("sqlite: inserting document %s: %w", doc.RelPath, err)
 	}
@@ -413,19 +418,23 @@ func (s *sqliteStore) TouchManifest(ctx context.Context, sourceName, relPath str
 }
 
 func (s *sqliteStore) GetDocument(ctx context.Context, sourceName, relPath string) (*store.DocumentContent, error) {
-	q := "SELECT id, source_name, rel_path, uri, title, content_sha256, size_bytes, mtime_unix FROM documents WHERE rel_path = ?"
+	q := "SELECT id, source_name, rel_path, uri, title, content_sha256, size_bytes, mtime_unix, metadata FROM documents WHERE rel_path = ?"
 	args := []any{relPath}
 	if sourceName != "" {
 		q += " AND source_name = ?"
 		args = append(args, sourceName)
 	}
 	var d store.Document
+	var metaJSON string
 	err := s.db.QueryRowContext(ctx, q, args...).Scan(
-		&d.ID, &d.SourceName, &d.RelPath, &d.URI, &d.Title, &d.SHA256, &d.SizeBytes, &d.MtimeUnix)
+		&d.ID, &d.SourceName, &d.RelPath, &d.URI, &d.Title, &d.SHA256, &d.SizeBytes, &d.MtimeUnix, &metaJSON)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
 	if err != nil {
+		return nil, err
+	}
+	if d.Metadata, err = unmarshalMeta(metaJSON); err != nil {
 		return nil, err
 	}
 
@@ -454,7 +463,7 @@ func (s *sqliteStore) ListDocuments(ctx context.Context, prefix, cursor string, 
 		limit = 50
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, source_name, rel_path, uri, title, content_sha256, size_bytes, mtime_unix
+		SELECT id, source_name, rel_path, uri, title, content_sha256, size_bytes, mtime_unix, metadata
 		FROM documents
 		WHERE rel_path LIKE ? ESCAPE '\' AND rel_path > ?
 		ORDER BY rel_path LIMIT ?`,
@@ -466,7 +475,11 @@ func (s *sqliteStore) ListDocuments(ctx context.Context, prefix, cursor string, 
 	var docs []store.Document
 	for rows.Next() {
 		var d store.Document
-		if err := rows.Scan(&d.ID, &d.SourceName, &d.RelPath, &d.URI, &d.Title, &d.SHA256, &d.SizeBytes, &d.MtimeUnix); err != nil {
+		var metaJSON string
+		if err := rows.Scan(&d.ID, &d.SourceName, &d.RelPath, &d.URI, &d.Title, &d.SHA256, &d.SizeBytes, &d.MtimeUnix, &metaJSON); err != nil {
+			return nil, err
+		}
+		if d.Metadata, err = unmarshalMeta(metaJSON); err != nil {
 			return nil, err
 		}
 		docs = append(docs, d)
@@ -495,4 +508,26 @@ func (s *sqliteStore) Close() error {
 	// TRUNCATE the WAL so the .db file is self-contained after shutdown.
 	_, _ = s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
 	return s.db.Close()
+}
+
+// orEmpty keeps stored metadata JSON canonical: nil maps serialize as {}.
+func orEmpty(m map[string]string) map[string]string {
+	if m == nil {
+		return map[string]string{}
+	}
+	return m
+}
+
+func unmarshalMeta(raw string) (map[string]string, error) {
+	if raw == "" || raw == "{}" {
+		return nil, nil
+	}
+	var m map[string]string
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		return nil, fmt.Errorf("sqlite: corrupt metadata %q: %w", raw, err)
+	}
+	if len(m) == 0 {
+		return nil, nil
+	}
+	return m, nil
 }

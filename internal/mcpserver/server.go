@@ -25,12 +25,13 @@ func New(a *app.App, version string) *mcp.Server {
 	}, nil)
 
 	type searchArgs struct {
-		Query         string  `json:"query" jsonschema:"the search query, natural language or keywords"`
-		KnowledgeBase string  `json:"knowledge_base,omitempty" jsonschema:"restrict the search to one knowledge base; omit to search all"`
-		Limit         int     `json:"limit,omitempty" jsonschema:"maximum results, default 8"`
-		MinScore      float64 `json:"min_score,omitempty" jsonschema:"minimum normalized relevance 0..1, default 0"`
-		Rerank        *bool   `json:"rerank,omitempty" jsonschema:"override reranking for this query; omit for the knowledge base default"`
-		MaxPerDoc     int     `json:"max_per_doc,omitempty" jsonschema:"max chunks from the same document; 0 = default (2), -1 = unlimited"`
+		Query         string            `json:"query" jsonschema:"the search query, natural language or keywords"`
+		KnowledgeBase string            `json:"knowledge_base,omitempty" jsonschema:"restrict the search to one knowledge base; omit to search all"`
+		Limit         int               `json:"limit,omitempty" jsonschema:"maximum results, default 8"`
+		MinScore      float64           `json:"min_score,omitempty" jsonschema:"minimum normalized relevance 0..1, default 0"`
+		Rerank        *bool             `json:"rerank,omitempty" jsonschema:"override reranking for this query; omit for the knowledge base default"`
+		MaxPerDoc     int               `json:"max_per_doc,omitempty" jsonschema:"max chunks from the same document; 0 = default (2), -1 = unlimited"`
+		Filter        map[string]string `json:"filter,omitempty" jsonschema:"keep only documents whose metadata matches every key/value pair"`
 	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "search",
@@ -45,7 +46,7 @@ func New(a *app.App, version string) *mcp.Server {
 			hits []app.Hit
 			err  error
 		)
-		opts := app.SearchOpts{Limit: args.Limit, MinScore: args.MinScore, Rerank: args.Rerank, MaxPerDoc: args.MaxPerDoc}
+		opts := app.SearchOpts{Limit: args.Limit, MinScore: args.MinScore, Rerank: args.Rerank, MaxPerDoc: args.MaxPerDoc, Filter: args.Filter}
 		if args.KnowledgeBase != "" {
 			hits, err = a.Search(ctx, args.KnowledgeBase, args.Query, opts)
 		} else {
@@ -141,16 +142,17 @@ func New(a *app.App, version string) *mcp.Server {
 	})
 
 	type storeArgs struct {
-		KnowledgeBase string `json:"knowledge_base" jsonschema:"a writable knowledge base (see list_knowledge_bases)"`
-		Content       string `json:"content" jsonschema:"the content to remember, markdown welcome"`
-		Title         string `json:"title,omitempty" jsonschema:"optional short title"`
+		KnowledgeBase string            `json:"knowledge_base" jsonschema:"a writable knowledge base (see list_knowledge_bases)"`
+		Content       string            `json:"content" jsonschema:"the content to remember, markdown welcome"`
+		Title         string            `json:"title,omitempty" jsonschema:"optional short title"`
+		Metadata      map[string]string `json:"metadata,omitempty" jsonschema:"flat string map attached to the document, filterable in search"`
 	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "store",
 		Description: "Persist content into a writable knowledge base so any agent can retrieve it later " +
 			"with search. Returns the document id.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args storeArgs) (*mcp.CallToolResult, any, error) {
-		id, err := a.StoreDocument(ctx, args.KnowledgeBase, args.Title, args.Content)
+		id, err := a.StoreDocument(ctx, args.KnowledgeBase, args.Title, args.Content, args.Metadata)
 		if err != nil {
 			return nil, nil, err
 		}

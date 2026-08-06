@@ -126,7 +126,7 @@ func (s *sqliteStore) hydrate(ctx context.Context, chunkIDs []int64) ([]hydrated
 	}
 	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT c.id, c.heading_path, c.start_line, c.end_line, c.text, c.context,
-		       d.id, d.source_name, d.rel_path, d.uri, d.title
+		       d.id, d.source_name, d.rel_path, d.uri, d.title, d.metadata
 		FROM chunks c JOIN documents d ON d.id = c.document_id
 		WHERE c.id IN (%s)`, placeholders), args...)
 	if err != nil {
@@ -137,8 +137,13 @@ func (s *sqliteStore) hydrate(ctx context.Context, chunkIDs []int64) ([]hydrated
 	byID := map[int64]hydratedHit{}
 	for rows.Next() {
 		var h hydratedHit
+		var metaJSON string
 		if err := rows.Scan(&h.chunkID, &h.Hit.HeadingPath, &h.Hit.StartLine, &h.Hit.EndLine, &h.Hit.Text, &h.Hit.Context,
-			&h.Hit.DocumentID, &h.Hit.SourceName, &h.Hit.RelPath, &h.Hit.URI, &h.Hit.Title); err != nil {
+			&h.Hit.DocumentID, &h.Hit.SourceName, &h.Hit.RelPath, &h.Hit.URI, &h.Hit.Title, &metaJSON); err != nil {
+			return nil, err
+		}
+		var err error
+		if h.Hit.Metadata, err = unmarshalMeta(metaJSON); err != nil {
 			return nil, err
 		}
 		byID[h.chunkID] = h
