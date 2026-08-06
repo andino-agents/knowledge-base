@@ -16,14 +16,14 @@ import (
 
 // Document is the indexed unit: one file, one managed memory, one page.
 type Document struct {
-	ID         int64
-	SourceName string
-	RelPath    string // path within the source, or generated id for managed docs
-	URI        string // file://..., git URL#branch:path, managed://<kb>/<id>
-	Title      string
-	SHA256     string
-	SizeBytes  int64
-	MtimeUnix  int64
+	ID         int64  `json:"-"`
+	SourceName string `json:"source"`
+	RelPath    string `json:"rel_path"` // path within the source, or generated id for managed docs
+	URI        string `json:"uri"`      // file://..., git URL#branch:path, managed://<kb>/<id>
+	Title      string `json:"title"`
+	SHA256     string `json:"content_sha256"`
+	SizeBytes  int64  `json:"size_bytes"`
+	MtimeUnix  int64  `json:"mtime_unix"`
 }
 
 // Chunk is a retrievable slice of a document.
@@ -45,18 +45,18 @@ type FileState struct {
 
 // Hit is one hybrid search result.
 type Hit struct {
-	DocumentID  int64
-	SourceName  string
-	RelPath     string
-	URI         string
-	Title       string
-	HeadingPath string
-	StartLine   int
-	EndLine     int
-	Text        string
-	Score       float64 // fused (RRF) or reranked score, higher is better
-	FTSRank     int     // 1-based rank in the keyword result list, 0 if absent
-	VecRank     int     // 1-based rank in the vector result list, 0 if absent
+	DocumentID  int64   `json:"document_id"`
+	SourceName  string  `json:"source"`
+	RelPath     string  `json:"rel_path"`
+	URI         string  `json:"uri"`
+	Title       string  `json:"title"`
+	HeadingPath string  `json:"heading_path,omitempty"`
+	StartLine   int     `json:"start_line"`
+	EndLine     int     `json:"end_line"`
+	Text        string  `json:"text"`
+	Score       float64 `json:"score"`              // fused (RRF) or reranked score, higher is better
+	FTSRank     int     `json:"fts_rank,omitempty"` // 1-based rank in the keyword result list, 0 if absent
+	VecRank     int     `json:"vec_rank,omitempty"` // 1-based rank in the vector result list, 0 if absent
 }
 
 // Stats summarizes a knowledge base.

@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/andino-agents/knowledge-base/internal/config"
 	"github.com/andino-agents/knowledge-base/internal/inference"
@@ -195,6 +196,45 @@ func (ix *Indexer) indexFile(ctx context.Context, src source.Source, relPath str
 		SHA256:     state.SHA256,
 		SizeBytes:  state.SizeBytes,
 		MtimeUnix:  state.MtimeUnix,
+	}, chunks, embeddings)
+}
+
+// IndexManaged indexes agent-provided content into the reserved "managed"
+// source of a writable knowledge base. Content is treated as markdown.
+func (ix *Indexer) IndexManaged(ctx context.Context, kbName, id, title, content string) error {
+	doc, err := extract.Markdown{}.Extract(id+".md", strings.NewReader(content))
+	if err != nil {
+		return err
+	}
+	chunks := chunk.Split(doc, ix.Chunking.MaxTokens, ix.Chunking.OverlapTokens, nil)
+	if len(chunks) == 0 {
+		return fmt.Errorf("content produced no indexable chunks")
+	}
+	texts := make([]string, len(chunks))
+	for i, c := range chunks {
+		texts[i] = embeddingText(c)
+	}
+	embeddings, err := ix.Embedder.Embed(ctx, texts)
+	if err != nil {
+		return fmt.Errorf("embedding managed document: %w", err)
+	}
+	if title == "" {
+		if doc.Title != "" {
+			title = doc.Title
+		} else {
+			title = id
+		}
+	}
+	sum := sha256.Sum256([]byte(content))
+	now := time.Now().Unix()
+	return ix.Store.UpsertDocument(ctx, store.Document{
+		SourceName: config.ManagedSourceName,
+		RelPath:    id,
+		URI:        "managed://" + kbName + "/" + id,
+		Title:      title,
+		SHA256:     hex.EncodeToString(sum[:]),
+		SizeBytes:  int64(len(content)),
+		MtimeUnix:  now,
 	}, chunks, embeddings)
 }
 

@@ -56,7 +56,9 @@ func rootCmd() *cobra.Command {
 	})
 
 	root.AddCommand(indexCmd(&configPath))
+	root.AddCommand(searchCmd(&configPath))
+	root.AddCommand(serveCmd(&configPath))
 
-	// search, serve, parity land in later phases.
+	// parity lands in phase 5.
 	return root
 }
