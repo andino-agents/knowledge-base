@@ -10,13 +10,13 @@ need shared knowledge inside a private network, and for agent runtimes that
 need durable, searchable memory.
 
 ```
- sources                    andino-kb                     consumers
-┌─────────────┐      ┌─────────────────────┐      ┌──────────────────────┐
-│ local folder │ ──▶ │ incremental indexer  │      │ Claude Code / opencode│
-│ git repo     │ ──▶ │ SQLite (1 file/KB)   │ ◀──▶ │  via MCP (HTTP)       │
-│ agent writes │ ──▶ │ FTS5 + vectors + RRF │      │ autonomous agents     │
-└─────────────┘      │ optional reranker    │      │  via MCP or REST      │
-                     └─────────────────────┘      └──────────────────────┘
+ sources                     andino-kb                      consumers
+┌──────────────┐      ┌──────────────────────┐      ┌──────────────────────┐
+│ local folder  │ ──▶ │ incremental indexer   │      │ Claude Code / opencode│
+│ git repo      │ ──▶ │ pdf/docx + OCR (VLM)  │      │  via MCP (HTTP)       │
+│ s3 / minio    │ ──▶ │ SQLite (1 file/KB)    │ ◀──▶ │ autonomous agents     │
+│ agent writes  │ ──▶ │ hybrid + contextual   │      │  via MCP or REST      │
+└──────────────┘      └──────────────────────┘      └──────────────────────┘
 ```
 
 ## Why another RAG server?
@@ -32,7 +32,12 @@ first query). andino-kb is the opposite trade:
   VM, a homelab, or an air-gapped host.
 - **Declarative pipelines** — sources are config, not clicks: a local
   directory (with a filesystem watcher), a git repository (shallow clone +
-  poll), and agent writes into writable KBs.
+  poll), an S3/MinIO bucket (standard AWS credential chain, custom
+  endpoints), and agent writes into writable KBs. Formats: markdown,
+  plaintext, code, PDF and DOCX — with optional OCR of scanned PDF pages
+  through any vision-capable chat model (a local llama.cpp with vision, or
+  a dedicated OCR VLM like
+  [Unlimited-OCR](https://github.com/baidu/Unlimited-OCR) on vLLM).
 - **Hybrid retrieval that holds up** — BM25 (FTS5) + dense vectors fused
   with Reciprocal Rank Fusion, optional cross-encoder reranking via any
   OpenAI-compatible `/v1/rerank`, and optional [contextual
@@ -178,8 +183,7 @@ existing RAG on recall.
 
 ## Roadmap
 
-- S3/MinIO source; pgvector and OpenSearch storage providers
-- PDF/DOCX extractors (the extractor interface is already pluggable)
+- pgvector and OpenSearch storage providers
 - Native Strands tool package in the andino agent-runtime
 
 ## License

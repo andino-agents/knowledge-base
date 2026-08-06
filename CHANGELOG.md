@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.3.0
+
+Enterprise sources: point andino-kb at the bucket where your company's
+documents actually live.
+
+- **S3/MinIO source** (aws-sdk-go-v2): paginated listing into the same
+  incremental sync, standard AWS credential chain (env, SSO, IRSA, instance
+  profiles), custom endpoints + path-style for MinIO. No secrets in the
+  config file.
+- **PDF and DOCX extractors**: pure-Go, per-page blocks for PDF, Word
+  heading styles feed the heading path for DOCX.
+- **Optional OCR of scanned PDF pages** via any OpenAI-compatible vision
+  model — a local llama.cpp with vision or a dedicated OCR VLM such as
+  Unlimited-OCR on vLLM. Faithful-transcription prompt, hard-fail contract,
+  {ocr, ocr_pages} metadata for auditability.
+- **Document metadata**: persisted on agent writes, returned in results,
+  filterable at search time (`filter`, AND-equality).
+- Binary size: 40.8 MB (was 32.3; the AWS SDK pays for the credential
+  chain).
+
 ## v0.2.0
 
 Retrieval quality, measured. On a real 238-document KB with 40 golden

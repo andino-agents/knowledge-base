@@ -67,6 +67,24 @@ knowledge_bases:
         watch: true
         debounce_ms: 2000
 
+  # An S3 or MinIO bucket, polled for changes. Credentials come from the
+  # standard AWS chain (env vars, shared config, SSO, IRSA); nothing secret
+  # goes in this file.
+  # - name: compliance-docs
+  #   sources:
+  #     - name: bucket
+  #       type: s3
+  #       bucket: "corp-documents"
+  #       prefix: "policies/"
+  #       paths: ["**/*.pdf", "**/*.docx"]
+  #       poll_interval: 10m
+  #       # endpoint: "http://minio.internal:9000"   # MinIO / S3-compatible
+  #       # path_style: true
+  #   # OCR for scanned PDFs through a vision-capable chat model:
+  #   # ocr:
+  #   #   enabled: true
+  #   #   model: local-chat
+
   # A git repository, polled for changes.
   - name: team-docs
     description: "Engineering docs from the monorepo"
