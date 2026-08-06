@@ -56,15 +56,17 @@ andino-kb index    -c config.yaml     # one-shot sync (waits for your embedding 
 andino-kb serve    -c config.yaml     # REST + MCP + /metrics on one port
 ```
 
-Point any MCP client at `http://your-host:8180/mcp` (streamable HTTP):
+Point any MCP client at `http://your-host:8180/mcp` (streamable HTTP).
+
+**Claude Code**
 
 ```bash
-# Claude Code
 claude mcp add --transport http kb http://your-host:8180/mcp
 ```
 
+**andino agent-runtime** (or any Strands-based agent), in `agent.yaml`:
+
 ```yaml
-# andino agent-runtime (or any Strands-based agent)
 mcp_servers:
   - name: kb
     transport: streamable_http
@@ -72,9 +74,14 @@ mcp_servers:
     headers: { Authorization: "Bearer ${ANDINO_KB_API_KEY}" }
 ```
 
+**opencode**, in `opencode.json`:
+
 ```json
-// opencode
-"mcp": { "kb": { "type": "remote", "url": "http://your-host:8180/mcp" } }
+{
+  "mcp": {
+    "kb": { "type": "remote", "url": "http://your-host:8180/mcp" }
+  }
+}
 ```
 
 ## MCP tools
