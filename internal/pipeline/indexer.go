@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,7 +32,9 @@ type Indexer struct {
 	// Contextual, when set, enables contextual retrieval: an LLM writes a
 	// short situating context per chunk at index time.
 	Contextual *inference.Chat
-	Logger     *slog.Logger
+	// OCR, when set, transcribes scanned PDF pages through a vision model.
+	OCR    *inference.Chat
+	Logger *slog.Logger
 }
 
 // contextualDocBudget bounds how much of the source document is shown to the
@@ -252,10 +255,30 @@ func (ix *Indexer) indexFile(ctx context.Context, src source.Source, relPath str
 	if err != nil {
 		return false, fmt.Errorf("extracting %s: %w", relPath, err)
 	}
+	var meta map[string]string
 	if len(scannedPages) > 0 {
-		// OCR lands in the next phase; until then scans are visible, not silent.
-		ix.logger().Warn("pages without a text layer skipped (no OCR configured)",
-			"path", relPath, "pages", scannedPages)
+		if ix.OCR == nil {
+			ix.logger().Warn("pages without a text layer skipped (no OCR configured)",
+				"path", relPath, "pages", scannedPages)
+		} else {
+			nextLine := 1
+			for _, b := range doc.Blocks {
+				if b.EndLine >= nextLine {
+					nextLine = b.EndLine + 1
+				}
+			}
+			ocrBlocks, err := ix.ocrScannedPages(ctx, relPath, content, scannedPages, nextLine)
+			if err != nil {
+				return false, fatalError{err}
+			}
+			doc.Blocks = append(doc.Blocks, ocrBlocks...)
+			pages := make([]string, len(scannedPages))
+			for i, p := range scannedPages {
+				pages[i] = strconv.Itoa(p)
+			}
+			meta = map[string]string{"ocr": "vlm", "ocr_pages": strings.Join(pages, ",")}
+			ix.logger().Info("ocr transcribed scanned pages", "path", relPath, "pages", scannedPages)
+		}
 	}
 	chunks := chunk.Split(doc, ix.Chunking.MaxTokens, ix.Chunking.OverlapTokens, nil)
 	if len(chunks) == 0 {
@@ -288,6 +311,7 @@ func (ix *Indexer) indexFile(ctx context.Context, src source.Source, relPath str
 		SHA256:     state.SHA256,
 		SizeBytes:  state.SizeBytes,
 		MtimeUnix:  state.MtimeUnix,
+		Metadata:   meta,
 	}, chunks, embeddings)
 }
 

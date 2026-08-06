@@ -3,6 +3,7 @@ package inference
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -26,11 +27,6 @@ type Chat struct {
 	ExtraBody map[string]any
 	Client    *http.Client
 	Logger    *slog.Logger
-}
-
-type chatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
 }
 
 type chatResponse struct {
@@ -58,11 +54,26 @@ func (c *Chat) logger() *slog.Logger {
 
 // Complete sends one system+user exchange and returns the trimmed response.
 func (c *Chat) Complete(ctx context.Context, system, user string) (string, error) {
+	return c.complete(ctx, system, any(user))
+}
+
+// CompleteWithImage sends a user turn carrying an image (OpenAI content-array
+// format with a base64 data URI). The chat model must be vision-capable.
+func (c *Chat) CompleteWithImage(ctx context.Context, system, user string, image []byte, mime string) (string, error) {
+	dataURI := "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(image)
+	content := []map[string]any{
+		{"type": "text", "text": user},
+		{"type": "image_url", "image_url": map[string]any{"url": dataURI}},
+	}
+	return c.complete(ctx, system, any(content))
+}
+
+func (c *Chat) complete(ctx context.Context, system string, userContent any) (string, error) {
 	payload := map[string]any{
 		"model": c.Model,
-		"messages": []chatMessage{
-			{Role: "system", Content: system},
-			{Role: "user", Content: user},
+		"messages": []map[string]any{
+			{"role": "system", "content": system},
+			{"role": "user", "content": userContent},
 		},
 		"temperature": 0,
 	}

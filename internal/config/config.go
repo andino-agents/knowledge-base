@@ -86,6 +86,13 @@ type ChatModel struct {
 	ExtraBody map[string]any `yaml:"extra_body"`
 }
 
+// OCR enables transcription of scanned PDF pages through a vision-capable
+// chat model at index time.
+type OCR struct {
+	Enabled bool   `yaml:"enabled"`
+	Model   string `yaml:"model"` // ref into inference.chat_models (must be vision-capable)
+}
+
 // Contextual enables contextual retrieval for a knowledge base: an LLM
 // generates a short situating context per chunk at index time, which is
 // embedded and BM25-indexed alongside the text.
@@ -104,6 +111,7 @@ type Defaults struct {
 	Chunking       Chunking `yaml:"chunking"`
 	EmbeddingModel string   `yaml:"embedding_model"`
 	RerankModel    string   `yaml:"rerank_model"`
+	OCR            *OCR     `yaml:"ocr"`
 }
 
 type KnowledgeBase struct {
@@ -119,6 +127,7 @@ type KnowledgeBase struct {
 	// stays available to requests that ask for rerank: true.
 	RerankDefault string      `yaml:"rerank_default"`
 	Contextual    *Contextual `yaml:"contextual"`
+	OCR           *OCR        `yaml:"ocr"`
 }
 
 // Source is a single ingestion pipeline. Type-specific fields are flat; the
@@ -217,6 +226,10 @@ func (c *Config) applyDefaults() {
 		if kb.Chunking == nil {
 			ch := c.Defaults.Chunking
 			kb.Chunking = &ch
+		}
+		if kb.OCR == nil && c.Defaults.OCR != nil {
+			o := *c.Defaults.OCR
+			kb.OCR = &o
 		}
 		for j := range kb.Sources {
 			s := &kb.Sources[j]
@@ -319,6 +332,9 @@ func (c *Config) Validate() error {
 		if kb.Contextual != nil && kb.Contextual.Enabled && !chatModels[kb.Contextual.Model] {
 			return fmt.Errorf("knowledge_bases[%s]: contextual.model %q not found in inference.chat_models", kb.Name, kb.Contextual.Model)
 		}
+		if kb.OCR != nil && kb.OCR.Enabled && !chatModels[kb.OCR.Model] {
+			return fmt.Errorf("knowledge_bases[%s]: ocr.model %q not found in inference.chat_models", kb.Name, kb.OCR.Model)
+		}
 		if len(kb.Sources) == 0 && !kb.Writable {
 			return fmt.Errorf("knowledge_bases[%s]: needs at least one source or writable: true", kb.Name)
 		}
@@ -375,13 +391,11 @@ func validateSource(kb string, s Source) error {
 	return nil
 }
 
-// ChatModelFor resolves a KB's contextual chat model definition.
-func (c *Config) ChatModelFor(kb *KnowledgeBase) (ChatModel, Backend, error) {
-	if kb.Contextual == nil {
-		return ChatModel{}, Backend{}, fmt.Errorf("config: kb %q has no contextual section", kb.Name)
-	}
+// ChatModelByName resolves a chat model reference to its definition and
+// backend.
+func (c *Config) ChatModelByName(name string) (ChatModel, Backend, error) {
 	for _, m := range c.Inference.ChatModels {
-		if m.Name == kb.Contextual.Model {
+		if m.Name == name {
 			for _, b := range c.Inference.Backends {
 				if b.Name == m.Backend {
 					return m, b, nil
@@ -389,7 +403,7 @@ func (c *Config) ChatModelFor(kb *KnowledgeBase) (ChatModel, Backend, error) {
 			}
 		}
 	}
-	return ChatModel{}, Backend{}, fmt.Errorf("config: chat model %q not found for kb %q", kb.Contextual.Model, kb.Name)
+	return ChatModel{}, Backend{}, fmt.Errorf("config: chat model %q not found", name)
 }
 
 // EmbeddingModelFor resolves a KB's embedding model definition.

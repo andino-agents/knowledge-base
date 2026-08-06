@@ -129,20 +129,31 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*App, er
 				}
 			}
 		}
-		var contextual *inference.Chat
-		if kbCfg.Contextual != nil && kbCfg.Contextual.Enabled {
-			chatModel, chatBackend, err := cfg.ChatModelFor(kbCfg)
+		newChat := func(ref string) (*inference.Chat, error) {
+			chatModel, chatBackend, err := cfg.ChatModelByName(ref)
 			if err != nil {
-				a.Close()
 				return nil, err
 			}
-			contextual = &inference.Chat{
+			return &inference.Chat{
 				BaseURL:   chatBackend.BaseURL,
 				APIKey:    chatBackend.APIKey,
 				Model:     chatModel.Model,
 				MaxTokens: chatModel.MaxTokens,
 				ExtraBody: chatModel.ExtraBody,
 				Logger:    logger,
+			}, nil
+		}
+		var contextual, ocrChat *inference.Chat
+		if kbCfg.Contextual != nil && kbCfg.Contextual.Enabled {
+			if contextual, err = newChat(kbCfg.Contextual.Model); err != nil {
+				a.Close()
+				return nil, err
+			}
+		}
+		if kbCfg.OCR != nil && kbCfg.OCR.Enabled {
+			if ocrChat, err = newChat(kbCfg.OCR.Model); err != nil {
+				a.Close()
+				return nil, err
 			}
 		}
 		a.kbs[kbCfg.Name] = &KB{
@@ -156,6 +167,7 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*App, er
 				Registry:   registry,
 				Chunking:   *kbCfg.Chunking,
 				Contextual: contextual,
+				OCR:        ocrChat,
 				Logger:     logger,
 			},
 			Sources: sources,
