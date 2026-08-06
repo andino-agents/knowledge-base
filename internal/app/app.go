@@ -22,6 +22,7 @@ import (
 	"github.com/andino-agents/knowledge-base/internal/source"
 	"github.com/andino-agents/knowledge-base/internal/source/gitrepo"
 	"github.com/andino-agents/knowledge-base/internal/source/localdir"
+	s3source "github.com/andino-agents/knowledge-base/internal/source/s3"
 	"github.com/andino-agents/knowledge-base/internal/store"
 )
 
@@ -112,6 +113,17 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*App, er
 				}
 				cacheDir := filepath.Join(cfg.Server.DataDir, "git", kbCfg.Name+"-"+sc.Name)
 				sources = append(sources, gitrepo.New(sc.Name, sc.URL, sc.Branch, sc.Paths, cacheDir, token, registry.Extensions()))
+			case "s3":
+				src, err := s3source.New(ctx, s3source.Options{
+					Name: sc.Name, Bucket: sc.Bucket, Prefix: sc.Prefix,
+					Region: sc.Region, Endpoint: sc.Endpoint, PathStyle: sc.PathStyle,
+					Paths: sc.Paths, Exts: registry.Extensions(),
+				})
+				if err != nil {
+					a.Close()
+					return nil, fmt.Errorf("kb %s: %w", kbCfg.Name, err)
+				}
+				sources = append(sources, src)
 			}
 		}
 		var reranker *inference.Reranker

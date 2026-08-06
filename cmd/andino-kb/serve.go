@@ -138,10 +138,11 @@ func authMCP(cfg *config.Config, next http.Handler) http.Handler {
 	})
 }
 
-// startPollers runs a periodic full sync for poll-based sources (git).
+// startPollers runs a periodic full sync for poll-based sources (git, s3).
 func startPollers(ctx context.Context, kbName string, kb *app.KB, metrics *ops.Metrics, logger *slog.Logger) {
 	for i, src := range kb.Sources {
-		if kb.Config.Sources[i].Type != "git" {
+		t := kb.Config.Sources[i].Type
+		if t != "git" && t != "s3" {
 			continue
 		}
 		interval := kb.Config.Sources[i].PollInterval
@@ -157,12 +158,12 @@ func startPollers(ctx context.Context, kbName string, kb *app.KB, metrics *ops.M
 					stats, err := kb.Indexer.SyncSource(ctx, src)
 					if err != nil {
 						if ctx.Err() == nil {
-							logger.Error("git poll sync failed", "kb", kbName, "source", src.Name(), "error", err)
+							logger.Error("poll sync failed", "kb", kbName, "source", src.Name(), "error", err)
 						}
 						continue
 					}
 					if stats.Indexed+stats.Deleted > 0 {
-						logger.Info("git poll sync", "kb", kbName, "source", src.Name(),
+						logger.Info("poll sync", "kb", kbName, "source", src.Name(),
 							"indexed", stats.Indexed, "deleted", stats.Deleted)
 					}
 					metrics.IndexOps.WithLabelValues(kbName, "indexed").Add(float64(stats.Indexed))
@@ -170,7 +171,7 @@ func startPollers(ctx context.Context, kbName string, kb *app.KB, metrics *ops.M
 				}
 			}
 		}()
-		logger.Info("polling git source", "kb", kbName, "source", src.Name(), "interval", interval)
+		logger.Info("polling source", "kb", kbName, "source", src.Name(), "interval", interval)
 	}
 }
 

@@ -134,7 +134,7 @@ type KnowledgeBase struct {
 // validator enforces which apply to which type.
 type Source struct {
 	Name string `yaml:"name"`
-	Type string `yaml:"type"` // localdir | git
+	Type string `yaml:"type"` // localdir | git | s3
 
 	// localdir
 	Path       string   `yaml:"path"`
@@ -146,9 +146,16 @@ type Source struct {
 	// git
 	URL          string        `yaml:"url"`
 	Branch       string        `yaml:"branch"`
-	Paths        []string      `yaml:"paths"`
+	Paths        []string      `yaml:"paths"` // also used by s3
 	PollInterval time.Duration `yaml:"poll_interval"`
 	TokenEnv     string        `yaml:"token_env"`
+
+	// s3
+	Bucket    string `yaml:"bucket"`
+	Prefix    string `yaml:"prefix"`
+	Region    string `yaml:"region"`
+	Endpoint  string `yaml:"endpoint"`   // custom endpoint for MinIO/compatible
+	PathStyle bool   `yaml:"path_style"` // path-style addressing (MinIO)
 }
 
 // ManagedSourceName is the implicit source name for agent-written documents
@@ -236,13 +243,11 @@ func (c *Config) applyDefaults() {
 			if s.Type == "localdir" && s.DebounceMS == 0 {
 				s.DebounceMS = 2000
 			}
-			if s.Type == "git" {
-				if s.Branch == "" {
-					s.Branch = "main"
-				}
-				if s.PollInterval == 0 {
-					s.PollInterval = 5 * time.Minute
-				}
+			if s.Type == "git" && s.Branch == "" {
+				s.Branch = "main"
+			}
+			if (s.Type == "git" || s.Type == "s3") && s.PollInterval == 0 {
+				s.PollInterval = 5 * time.Minute
 			}
 		}
 	}
