@@ -133,9 +133,15 @@ func (s *Server) getKB(w http.ResponseWriter, r *http.Request) {
 }
 
 type searchRequest struct {
-	Query    string  `json:"query"`
-	Limit    int     `json:"limit"`
-	MinScore float64 `json:"min_score"`
+	Query     string  `json:"query"`
+	Limit     int     `json:"limit"`
+	MinScore  float64 `json:"min_score"`
+	Rerank    *bool   `json:"rerank"`      // nil = KB default
+	MaxPerDoc int     `json:"max_per_doc"` // 0 = no cap
+}
+
+func (r searchRequest) opts() app.SearchOpts {
+	return app.SearchOpts{Limit: r.Limit, MinScore: r.MinScore, Rerank: r.Rerank, MaxPerDoc: r.MaxPerDoc}
 }
 
 func (s *Server) searchKB(w http.ResponseWriter, r *http.Request) {
@@ -145,7 +151,7 @@ func (s *Server) searchKB(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	start := time.Now()
-	hits, err := s.App.Search(r.Context(), r.PathValue("kb"), req.Query, req.Limit, req.MinScore)
+	hits, err := s.App.Search(r.Context(), r.PathValue("kb"), req.Query, req.opts())
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -163,7 +169,7 @@ func (s *Server) searchAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	start := time.Now()
-	hits, err := s.App.SearchAll(r.Context(), req.Query, req.Limit, req.MinScore)
+	hits, err := s.App.SearchAll(r.Context(), req.Query, req.opts())
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return

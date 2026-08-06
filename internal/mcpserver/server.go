@@ -29,6 +29,8 @@ func New(a *app.App, version string) *mcp.Server {
 		KnowledgeBase string  `json:"knowledge_base,omitempty" jsonschema:"restrict the search to one knowledge base; omit to search all"`
 		Limit         int     `json:"limit,omitempty" jsonschema:"maximum results, default 8"`
 		MinScore      float64 `json:"min_score,omitempty" jsonschema:"minimum normalized relevance 0..1, default 0"`
+		Rerank        *bool   `json:"rerank,omitempty" jsonschema:"override reranking for this query; omit for the knowledge base default"`
+		MaxPerDoc     int     `json:"max_per_doc,omitempty" jsonschema:"max chunks from the same document, 0 = unlimited"`
 	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "search",
@@ -43,10 +45,11 @@ func New(a *app.App, version string) *mcp.Server {
 			hits []app.Hit
 			err  error
 		)
+		opts := app.SearchOpts{Limit: args.Limit, MinScore: args.MinScore, Rerank: args.Rerank, MaxPerDoc: args.MaxPerDoc}
 		if args.KnowledgeBase != "" {
-			hits, err = a.Search(ctx, args.KnowledgeBase, args.Query, args.Limit, args.MinScore)
+			hits, err = a.Search(ctx, args.KnowledgeBase, args.Query, opts)
 		} else {
-			hits, err = a.SearchAll(ctx, args.Query, args.Limit, args.MinScore)
+			hits, err = a.SearchAll(ctx, args.Query, opts)
 		}
 		if err != nil {
 			return nil, nil, err

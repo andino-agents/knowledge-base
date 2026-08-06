@@ -35,11 +35,12 @@ func searchCmd(configPath *string) *cobra.Command {
 
 			query := strings.Join(args, " ")
 			start := time.Now()
+			opts := app.SearchOpts{Limit: limit, MinScore: minScore}
 			var hits []app.Hit
 			if kbName != "" {
-				hits, err = a.Search(cmd.Context(), kbName, query, limit, minScore)
+				hits, err = a.Search(cmd.Context(), kbName, query, opts)
 			} else {
-				hits, err = a.SearchAll(cmd.Context(), query, limit, minScore)
+				hits, err = a.SearchAll(cmd.Context(), query, opts)
 			}
 			if err != nil {
 				return err

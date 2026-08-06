@@ -209,33 +209,53 @@ func (a *App) Readiness() map[string]error {
 	return out
 }
 
-// Search runs a hybrid query against one KB. minScore filters on the
+// SearchOpts tunes one search request. Zero values mean "use defaults".
+type SearchOpts struct {
+	Limit    int
+	MinScore float64
+	// Rerank overrides the KB default: nil = rerank when the KB has a
+	// reranker configured; &false disables it for this request; &true is a
+	// no-op when no reranker exists.
+	Rerank *bool
+	// MaxPerDoc caps how many chunks of the same document appear in the
+	// results. 0 = no cap.
+	MaxPerDoc int
+}
+
+// Search runs a hybrid query against one KB. MinScore filters on the
 // normalized relevance (0..1).
-func (a *App) Search(ctx context.Context, kbName, query string, limit int, minScore float64) ([]Hit, error) {
+func (a *App) Search(ctx context.Context, kbName, query string, opts SearchOpts) ([]Hit, error) {
 	kb, err := a.KB(kbName)
 	if err != nil {
 		return nil, err
 	}
+	limit := opts.Limit
 	if limit <= 0 {
 		limit = 8
 	}
+	minScore := opts.MinScore
+	useRerank := kb.Reranker != nil && (opts.Rerank == nil || *opts.Rerank)
+
 	vecs, err := kb.Embedder.Embed(ctx, []string{query})
 	if err != nil {
 		return nil, fmt.Errorf("embedding query: %w", err)
 	}
 
-	// With a reranker configured, fetch a wider candidate pool for it to
-	// reorder; without one, the fused top-limit is the answer.
+	// With reranking or a per-doc cap active, fetch a wider candidate pool;
+	// otherwise the fused top-limit is the answer.
 	fetchK := limit
-	if kb.Reranker != nil {
+	if useRerank || opts.MaxPerDoc > 0 {
 		fetchK = max(limit*4, 24)
 	}
 	raw, err := kb.Store.HybridSearch(ctx, query, vecs[0], fetchK)
 	if err != nil {
 		return nil, err
 	}
+	if opts.MaxPerDoc > 0 {
+		raw = capPerDocument(raw, opts.MaxPerDoc)
+	}
 
-	if kb.Reranker != nil && len(raw) > 0 {
+	if useRerank && len(raw) > 0 {
 		docs := make([]string, len(raw))
 		for i, h := range raw {
 			docs[i] = h.Text
@@ -275,13 +295,14 @@ func (a *App) Search(ctx context.Context, kbName, query string, limit int, minSc
 }
 
 // SearchAll queries every KB and merges results by relevance.
-func (a *App) SearchAll(ctx context.Context, query string, limit int, minScore float64) ([]Hit, error) {
+func (a *App) SearchAll(ctx context.Context, query string, opts SearchOpts) ([]Hit, error) {
+	limit := opts.Limit
 	if limit <= 0 {
 		limit = 8
 	}
 	var all []Hit
 	for _, name := range a.KBNames() {
-		hits, err := a.Search(ctx, name, query, limit, minScore)
+		hits, err := a.Search(ctx, name, query, opts)
 		if err != nil {
 			return nil, fmt.Errorf("kb %s: %w", name, err)
 		}
@@ -292,6 +313,22 @@ func (a *App) SearchAll(ctx context.Context, query string, limit int, minScore f
 		all = all[:limit]
 	}
 	return all, nil
+}
+
+// capPerDocument keeps at most n chunks per document, preserving order.
+// Retrieval budgets are small; without a cap one strong document can crowd
+// every other source out of the results an agent sees.
+func capPerDocument(hits []store.Hit, n int) []store.Hit {
+	seen := map[int64]int{}
+	out := hits[:0]
+	for _, h := range hits {
+		if seen[h.DocumentID] >= n {
+			continue
+		}
+		seen[h.DocumentID]++
+		out = append(out, h)
+	}
+	return out
 }
 
 // StoreDocument writes agent-provided content into a writable KB and indexes

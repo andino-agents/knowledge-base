@@ -59,6 +59,7 @@ func rootCmd() *cobra.Command {
 	root.AddCommand(searchCmd(&configPath))
 	root.AddCommand(serveCmd(&configPath))
 	root.AddCommand(parityCmd(&configPath))
+	root.AddCommand(evalCmd(&configPath))
 
 	return root
 }
