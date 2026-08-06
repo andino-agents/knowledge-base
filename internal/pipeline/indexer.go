@@ -54,6 +54,11 @@ func contextualUserPrompt(docText, chunkText string) string {
 		"Answer only with the succinct context."
 }
 
+// contextualWorkers is how many chunk contexts are generated concurrently.
+// Local inference servers run several slots; using a few of them roughly
+// divides indexing wall-clock without starving live traffic.
+const contextualWorkers = 4
+
 // contextualize fills chunk.Context for every chunk. Single-chunk documents
 // are skipped: the chunk IS the document, a generated context adds noise.
 func (ix *Indexer) contextualize(ctx context.Context, title string, content []byte, chunks []store.Chunk) error {
@@ -64,15 +69,41 @@ func (ix *Indexer) contextualize(ctx context.Context, title string, content []by
 	if est := chunk.Estimate(docText); est > contextualDocBudget {
 		docText = docText[:contextualDocBudget*chunk.CharsPerToken]
 	}
+
+	sem := make(chan struct{}, contextualWorkers)
+	errCh := make(chan error, len(chunks))
+	cctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	launched := 0
 	for i := range chunks {
-		text, err := ix.Contextual.Complete(ctx, contextualSystemPrompt,
-			contextualUserPrompt(docText, chunks[i].Text))
-		if err != nil {
-			return err
+		if cctx.Err() != nil {
+			break // a worker failed; stop dispatching
 		}
-		chunks[i].Context = text
+		sem <- struct{}{}
+		launched++
+		go func(i int) {
+			defer func() { <-sem }()
+			text, err := ix.Contextual.Complete(cctx, contextualSystemPrompt,
+				contextualUserPrompt(docText, chunks[i].Text))
+			if err != nil {
+				cancel()
+				errCh <- err
+				return
+			}
+			chunks[i].Context = text
+			errCh <- nil
+		}(i)
 	}
-	return nil
+	var firstErr error
+	for j := 0; j < launched; j++ {
+		if err := <-errCh; err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if firstErr == nil {
+		firstErr = ctx.Err()
+	}
+	return firstErr
 }
 
 type SyncStats struct {
