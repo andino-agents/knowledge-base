@@ -221,8 +221,13 @@ func percentile(values []int64, p int) int64 {
 	}
 	sorted := append([]int64(nil), values...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
-	idx := (len(sorted) - 1) * p / 100
-	return sorted[idx]
+	// Nearest-rank: the smallest value with at least p% of samples at or
+	// below it.
+	idx := (p*len(sorted) + 99) / 100
+	if idx < 1 {
+		idx = 1
+	}
+	return sorted[idx-1]
 }
 
 func printRun(label string, run *evalRun) {

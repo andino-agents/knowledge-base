@@ -137,7 +137,7 @@ type searchRequest struct {
 	Limit     int     `json:"limit"`
 	MinScore  float64 `json:"min_score"`
 	Rerank    *bool   `json:"rerank"`      // nil = KB default
-	MaxPerDoc int     `json:"max_per_doc"` // 0 = no cap
+	MaxPerDoc int     `json:"max_per_doc"` // 0 = default (2), negative = no cap
 }
 
 func (r searchRequest) opts() app.SearchOpts {

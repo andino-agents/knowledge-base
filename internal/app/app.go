@@ -218,9 +218,18 @@ type SearchOpts struct {
 	// no-op when no reranker exists.
 	Rerank *bool
 	// MaxPerDoc caps how many chunks of the same document appear in the
-	// results. 0 = no cap.
+	// results. 0 = the default cap (2); negative = no cap.
 	MaxPerDoc int
 }
+
+// defaultMaxPerDoc keeps result lists diverse by default: without a cap one
+// strong document can fill an agent's whole retrieval budget.
+const defaultMaxPerDoc = 2
+
+// rerankPool bounds how many fused candidates the cross-encoder scores per
+// query. Reranking cost is linear in pool size (~35ms/doc on a local 0.6B);
+// beyond ~24 candidates the extra recall is not worth the latency.
+const rerankPool = 24
 
 // Search runs a hybrid query against one KB. MinScore filters on the
 // normalized relevance (0..1).
@@ -235,6 +244,10 @@ func (a *App) Search(ctx context.Context, kbName, query string, opts SearchOpts)
 	}
 	minScore := opts.MinScore
 	useRerank := kb.Reranker != nil && (opts.Rerank == nil || *opts.Rerank)
+	maxPerDoc := opts.MaxPerDoc
+	if maxPerDoc == 0 {
+		maxPerDoc = defaultMaxPerDoc
+	}
 
 	vecs, err := kb.Embedder.Embed(ctx, []string{query})
 	if err != nil {
@@ -244,39 +257,64 @@ func (a *App) Search(ctx context.Context, kbName, query string, opts SearchOpts)
 	// With reranking or a per-doc cap active, fetch a wider candidate pool;
 	// otherwise the fused top-limit is the answer.
 	fetchK := limit
-	if useRerank || opts.MaxPerDoc > 0 {
+	if useRerank || maxPerDoc > 0 {
 		fetchK = max(limit*4, 24)
 	}
 	raw, err := kb.Store.HybridSearch(ctx, query, vecs[0], fetchK)
 	if err != nil {
 		return nil, err
 	}
-	if opts.MaxPerDoc > 0 {
-		raw = capPerDocument(raw, opts.MaxPerDoc)
-	}
 
 	if useRerank && len(raw) > 0 {
-		docs := make([]string, len(raw))
-		for i, h := range raw {
+		// Bound the cross-encoder's work: score the best fused candidates.
+		// The per-doc cap is applied AFTER reranking, never before: fusion
+		// order and cross-encoder preference disagree about which chunk of a
+		// document is best, and capping early throws away the winner.
+		pool := raw
+		if len(pool) > rerankPool {
+			pool = pool[:rerankPool]
+		}
+		docs := make([]string, len(pool))
+		for i, h := range pool {
 			docs[i] = h.Text
 		}
-		ranked, err := kb.Reranker.Rerank(ctx, query, docs, limit)
+		ranked, err := kb.Reranker.Rerank(ctx, query, docs, 0 /* rank the whole pool */)
 		if err != nil {
 			// Reranking is an enhancement, unlike embeddings: degrade to
 			// fusion order with a warning instead of failing the query.
 			a.Logger.Warn("rerank failed, falling back to fusion order", "kb", kbName, "error", err)
 		} else {
-			hits := make([]Hit, 0, len(ranked))
+			ordered := make([]store.Hit, 0, len(ranked))
+			scores := make(map[int64]map[int]float64) // docID -> startLine -> score
 			for _, rk := range ranked {
-				if rk.Score < minScore {
+				h := pool[rk.Index]
+				ordered = append(ordered, h)
+				if scores[h.DocumentID] == nil {
+					scores[h.DocumentID] = map[int]float64{}
+				}
+				scores[h.DocumentID][h.StartLine] = rk.Score
+			}
+			if maxPerDoc > 0 {
+				ordered = capPerDocument(ordered, maxPerDoc)
+			}
+			if len(ordered) > limit {
+				ordered = ordered[:limit]
+			}
+			hits := make([]Hit, 0, len(ordered))
+			for _, h := range ordered {
+				score := scores[h.DocumentID][h.StartLine]
+				if score < minScore {
 					continue
 				}
-				hits = append(hits, Hit{Hit: raw[rk.Index], KnowledgeBase: kbName, Relevance: rk.Score})
+				hits = append(hits, Hit{Hit: h, KnowledgeBase: kbName, Relevance: score})
 			}
 			return hits, nil
 		}
 	}
 
+	if maxPerDoc > 0 {
+		raw = capPerDocument(raw, maxPerDoc)
+	}
 	if len(raw) > limit {
 		raw = raw[:limit]
 	}

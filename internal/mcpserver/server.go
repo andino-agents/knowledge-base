@@ -30,7 +30,7 @@ func New(a *app.App, version string) *mcp.Server {
 		Limit         int     `json:"limit,omitempty" jsonschema:"maximum results, default 8"`
 		MinScore      float64 `json:"min_score,omitempty" jsonschema:"minimum normalized relevance 0..1, default 0"`
 		Rerank        *bool   `json:"rerank,omitempty" jsonschema:"override reranking for this query; omit for the knowledge base default"`
-		MaxPerDoc     int     `json:"max_per_doc,omitempty" jsonschema:"max chunks from the same document, 0 = unlimited"`
+		MaxPerDoc     int     `json:"max_per_doc,omitempty" jsonschema:"max chunks from the same document; 0 = default (2), -1 = unlimited"`
 	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "search",
