@@ -7,6 +7,7 @@ require (
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/go-git/go-git/v5 v5.19.2
 	github.com/goccy/go-yaml v1.19.2
+	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/ncruces/go-sqlite3 v0.35.3
 	github.com/prometheus/client_golang v1.24.1

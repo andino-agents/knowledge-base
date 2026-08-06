@@ -34,6 +34,12 @@ type Extractor interface {
 	Extract(relPath string, r io.Reader) (Doc, error)
 }
 
+// ScanAware is implemented by extractors that can report pages without a
+// usable text layer (scan candidates for OCR).
+type ScanAware interface {
+	ExtractWithScans(relPath string, r io.Reader) (Doc, []int, error)
+}
+
 // Registry maps extensions to extractors and doubles as the indexable-files
 // allowlist: anything without a registered extension never enters a manifest.
 type Registry struct {
@@ -54,9 +60,10 @@ func NewRegistry(extractors ...Extractor) (*Registry, error) {
 	return r, nil
 }
 
-// Default returns the v0.1 registry: markdown, plaintext and code.
+// Default returns the standard registry: markdown, plaintext, code, PDF
+// and DOCX.
 func Default() *Registry {
-	r, err := NewRegistry(Markdown{}, Plaintext{}, Code{})
+	r, err := NewRegistry(Markdown{}, Plaintext{}, Code{}, PDF{}, Docx{})
 	if err != nil {
 		panic(err) // static extractor set; a clash is a programming error
 	}

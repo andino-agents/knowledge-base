@@ -240,9 +240,22 @@ func (ix *Indexer) indexFile(ctx context.Context, src source.Source, relPath str
 	if extractor == nil {
 		return false, fmt.Errorf("no extractor for %s (source listed a non-indexable file?)", relPath)
 	}
-	doc, err := extractor.Extract(relPath, strings.NewReader(string(content)))
+	var (
+		doc          extract.Doc
+		scannedPages []int
+	)
+	if sa, ok := extractor.(extract.ScanAware); ok {
+		doc, scannedPages, err = sa.ExtractWithScans(relPath, strings.NewReader(string(content)))
+	} else {
+		doc, err = extractor.Extract(relPath, strings.NewReader(string(content)))
+	}
 	if err != nil {
 		return false, fmt.Errorf("extracting %s: %w", relPath, err)
+	}
+	if len(scannedPages) > 0 {
+		// OCR lands in the next phase; until then scans are visible, not silent.
+		ix.logger().Warn("pages without a text layer skipped (no OCR configured)",
+			"path", relPath, "pages", scannedPages)
 	}
 	chunks := chunk.Split(doc, ix.Chunking.MaxTokens, ix.Chunking.OverlapTokens, nil)
 	if len(chunks) == 0 {
