@@ -21,15 +21,11 @@ type Chat struct {
 	Model      string
 	MaxTokens  int
 	MaxRetries int
-	Client     *http.Client
-	Logger     *slog.Logger
-}
-
-type chatRequest struct {
-	Model       string        `json:"model"`
-	Messages    []chatMessage `json:"messages"`
-	Temperature float64       `json:"temperature"`
-	MaxTokens   int           `json:"max_tokens,omitempty"`
+	// ExtraBody is merged into every request body (provider-specific knobs
+	// like chat_template_kwargs).
+	ExtraBody map[string]any
+	Client    *http.Client
+	Logger    *slog.Logger
 }
 
 type chatMessage struct {
@@ -62,15 +58,21 @@ func (c *Chat) logger() *slog.Logger {
 
 // Complete sends one system+user exchange and returns the trimmed response.
 func (c *Chat) Complete(ctx context.Context, system, user string) (string, error) {
-	body, err := json.Marshal(chatRequest{
-		Model: c.Model,
-		Messages: []chatMessage{
+	payload := map[string]any{
+		"model": c.Model,
+		"messages": []chatMessage{
 			{Role: "system", Content: system},
 			{Role: "user", Content: user},
 		},
-		Temperature: 0,
-		MaxTokens:   c.MaxTokens,
-	})
+		"temperature": 0,
+	}
+	if c.MaxTokens > 0 {
+		payload["max_tokens"] = c.MaxTokens
+	}
+	for k, v := range c.ExtraBody {
+		payload[k] = v
+	}
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return "", err
 	}
@@ -125,5 +127,12 @@ func (c *Chat) doRequest(ctx context.Context, body []byte) (text string, retryab
 	if len(parsed.Choices) == 0 {
 		return "", false, fmt.Errorf("empty choices in response")
 	}
-	return strings.TrimSpace(parsed.Choices[0].Message.Content), false, nil
+	text = strings.TrimSpace(parsed.Choices[0].Message.Content)
+	if text == "" {
+		// Thinking-first models can burn the whole token budget on
+		// reasoning and return empty content. That must surface, not get
+		// silently stored: see ChatModel.ExtraBody to disable thinking.
+		return "", false, fmt.Errorf("empty content in response (thinking-first model? set extra_body chat_template_kwargs.enable_thinking=false)")
+	}
+	return text, false, nil
 }

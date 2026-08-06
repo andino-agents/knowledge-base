@@ -78,6 +78,12 @@ type ChatModel struct {
 	Backend   string `yaml:"backend"`
 	Model     string `yaml:"model"`
 	MaxTokens int    `yaml:"max_tokens"`
+	// ExtraBody is merged into the /v1/chat/completions request body.
+	// Needed e.g. to disable reasoning on thinking-first models
+	// (llama.cpp/vLLM: chat_template_kwargs: {enable_thinking: false}),
+	// whose reasoning otherwise consumes max_tokens and returns empty
+	// content.
+	ExtraBody map[string]any `yaml:"extra_body"`
 }
 
 // Contextual enables contextual retrieval for a knowledge base: an LLM

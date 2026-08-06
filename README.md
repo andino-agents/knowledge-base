@@ -35,8 +35,11 @@ first query). andino-kb is the opposite trade:
   poll), and agent writes into writable KBs.
 - **Hybrid retrieval that holds up** — BM25 (FTS5) + dense vectors fused
   with Reciprocal Rank Fusion, optional cross-encoder reranking via any
-  OpenAI-compatible `/v1/rerank`. Keyword-only misses paraphrases;
-  vector-only misses exact identifiers; you want both.
+  OpenAI-compatible `/v1/rerank`, and optional [contextual
+  retrieval](https://www.anthropic.com/engineering/contextual-retrieval):
+  an LLM situates every chunk within its document at index time, and that
+  context is embedded and BM25-indexed with the text. Keyword-only misses
+  paraphrases; vector-only misses exact identifiers; you want both.
 - **Inference-backend agnostic** — embeddings and reranking against any
   OpenAI-compatible endpoint: llama.cpp, vLLM, Ollama, OpenAI, Bedrock.
 - **Apache-2.0, all of it** — no open-core cut.

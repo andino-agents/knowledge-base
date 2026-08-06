@@ -141,6 +141,7 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*App, er
 				APIKey:    chatBackend.APIKey,
 				Model:     chatModel.Model,
 				MaxTokens: chatModel.MaxTokens,
+				ExtraBody: chatModel.ExtraBody,
 				Logger:    logger,
 			}
 		}

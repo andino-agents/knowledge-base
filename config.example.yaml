@@ -29,6 +29,12 @@ inference:
       batch_size: 32
       max_retries: 4
   rerank_models: []             # optional /v1/rerank models
+  chat_models: []               # chat models for index-time work (contextual retrieval)
+  # chat_models:
+  #   - name: local-chat
+  #     backend: local-llama
+  #     model: "qwen3.6-35b-a3b"
+  #     max_tokens: 200
 
 defaults:
   chunking:
@@ -42,6 +48,13 @@ knowledge_bases:
   # A local directory, kept fresh by a filesystem watcher.
   - name: obsidian-vault
     description: "Personal Obsidian vault"
+    # Contextual retrieval (optional): an LLM writes a short situating
+    # context per chunk at index time; it is embedded and BM25-indexed
+    # alongside the text. Costs one chat call per chunk when a document
+    # changes; prefix-caching servers pay the document prompt once.
+    # contextual:
+    #   enabled: true
+    #   model: local-chat
     sources:
       - name: vault
         type: localdir
