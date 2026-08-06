@@ -88,6 +88,10 @@ type Store interface {
 	// Manifest returns the sync state of every tracked file for a source.
 	Manifest(ctx context.Context, sourceName string) (map[string]FileState, error)
 
+	// TouchManifest updates a file's manifest entry without reindexing, for
+	// files whose size/mtime changed but whose content hash did not.
+	TouchManifest(ctx context.Context, sourceName, relPath string, fs FileState) error
+
 	// HybridSearch runs keyword and vector retrieval and fuses the results.
 	// queryVec dimension must match the store's configured dimension.
 	HybridSearch(ctx context.Context, query string, queryVec []float32, k int) ([]Hit, error)

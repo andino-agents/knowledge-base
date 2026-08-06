@@ -400,6 +400,18 @@ func (s *sqliteStore) Manifest(ctx context.Context, sourceName string) (map[stri
 	return m, nil
 }
 
+func (s *sqliteStore) TouchManifest(ctx context.Context, sourceName, relPath string, fs store.FileState) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO source_files(source_name, rel_path, content_sha256, size_bytes, mtime_unix, document_id)
+		VALUES (?, ?, ?, ?, ?, (SELECT id FROM documents WHERE source_name = ? AND rel_path = ?))
+		ON CONFLICT(source_name, rel_path) DO UPDATE SET
+			content_sha256 = excluded.content_sha256,
+			size_bytes = excluded.size_bytes,
+			mtime_unix = excluded.mtime_unix`,
+		sourceName, relPath, fs.SHA256, fs.SizeBytes, fs.MtimeUnix, sourceName, relPath)
+	return err
+}
+
 func (s *sqliteStore) GetDocument(ctx context.Context, sourceName, relPath string) (*store.DocumentContent, error) {
 	q := "SELECT id, source_name, rel_path, uri, title, content_sha256, size_bytes, mtime_unix FROM documents WHERE rel_path = ?"
 	args := []any{relPath}
