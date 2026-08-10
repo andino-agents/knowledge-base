@@ -119,3 +119,75 @@ func TestEmptyAPIKeyFromUnsetEnv(t *testing.T) {
 		t.Fatalf("unset env var must fail loudly, got: %v", err)
 	}
 }
+
+func TestBearerToken(t *testing.T) {
+	cases := map[string]struct {
+		header    string
+		wantToken string
+		wantOK    bool
+	}{
+		"valid":            {"Bearer abc", "abc", true},
+		"empty header":     {"", "", false},
+		"no prefix":        {"abc", "", false},
+		"wrong case":       {"bearer abc", "", false},
+		"prefix only":      {"Bearer ", "", false},
+		"basic auth":       {"Basic abc", "", false},
+		"token with space": {"Bearer a b", "a b", true},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			token, ok := BearerToken(tc.header)
+			if token != tc.wantToken || ok != tc.wantOK {
+				t.Fatalf("BearerToken(%q) = (%q, %v), want (%q, %v)", tc.header, token, ok, tc.wantToken, tc.wantOK)
+			}
+		})
+	}
+}
+
+func TestLookupKey(t *testing.T) {
+	srv := Server{APIKeys: []APIKey{
+		{Key: "r", Scope: "read"},
+		{Key: "rw", Scope: "readwrite"},
+	}}
+
+	for _, tc := range []struct{ token, wantScope string }{{"r", "read"}, {"rw", "readwrite"}} {
+		key, ok := srv.LookupKey(tc.token)
+		if !ok || key.Scope != tc.wantScope {
+			t.Errorf("LookupKey(%q) = (%+v, %v), want scope %q", tc.token, key, ok, tc.wantScope)
+		}
+	}
+	for _, token := range []string{"", "nope", "r ", "rw-longer"} {
+		if _, ok := srv.LookupKey(token); ok {
+			t.Errorf("LookupKey(%q) matched, want miss", token)
+		}
+	}
+	// An empty key list matches nothing; callers decide what that means.
+	if _, ok := (&Server{}).LookupKey("r"); ok {
+		t.Error("LookupKey on an empty key list matched")
+	}
+}
+
+func TestAuthorizeOps(t *testing.T) {
+	on, off := true, false
+	keys := []APIKey{{Key: "r", Scope: "read"}}
+
+	cases := map[string]struct {
+		srv    Server
+		header string
+		want   bool
+	}{
+		"no keys, ops open by default":     {Server{}, "", true},
+		"keys configured, ops closed":      {Server{APIKeys: keys}, "", false},
+		"keys configured, valid key opens": {Server{APIKeys: keys}, "Bearer r", true},
+		"keys configured, bad key closed":  {Server{APIKeys: keys}, "Bearer nope", false},
+		"explicit off with keys":           {Server{APIKeys: keys, OpsRequireAuth: &off}, "", true},
+		"explicit on without keys":         {Server{OpsRequireAuth: &on}, "", false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := tc.srv.AuthorizeOps(tc.header); got != tc.want {
+				t.Fatalf("AuthorizeOps(%q) = %v, want %v", tc.header, got, tc.want)
+			}
+		})
+	}
+}

@@ -16,8 +16,11 @@ import (
 	"github.com/andino-agents/knowledge-base/internal/store"
 )
 
-// New builds the MCP server with every tool registered.
-func New(a *app.App, version string) *mcp.Server {
+// New builds the MCP server. The read tools are always registered; the write
+// tools (store, delete_document) only when allowWrites, which the caller
+// derives from the scope of the request's API key. A read-scoped key does not
+// see them in tools/list at all, so an agent never tries what it cannot do.
+func New(a *app.App, version string, allowWrites bool) *mcp.Server {
 	srv := mcp.NewServer(&mcp.Implementation{
 		Name:    "andino-kb",
 		Title:   "Andino Knowledge Base",
@@ -140,6 +143,10 @@ func New(a *app.App, version string) *mcp.Server {
 		}
 		return jsonResult(map[string]any{"document": doc.Document, "content": text})
 	})
+
+	if !allowWrites {
+		return srv
+	}
 
 	type storeArgs struct {
 		KnowledgeBase string            `json:"knowledge_base" jsonschema:"a writable knowledge base (see list_knowledge_bases)"`

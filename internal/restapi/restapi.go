@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/andino-agents/knowledge-base/internal/app"
+	"github.com/andino-agents/knowledge-base/internal/config"
 	"github.com/andino-agents/knowledge-base/internal/store"
 )
 
@@ -61,30 +62,26 @@ func (s *Server) Handler() http.Handler {
 // "read"; a read-scoped key cannot call write endpoints.
 func (s *Server) withAuth(need string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		keys := s.App.Config.Server.APIKeys
-		if len(keys) == 0 {
+		srv := &s.App.Config.Server
+		if len(srv.APIKeys) == 0 {
 			next(w, r)
 			return
 		}
-		auth := r.Header.Get("Authorization")
-		const prefix = "Bearer "
-		if len(auth) <= len(prefix) || auth[:len(prefix)] != prefix {
+		token, ok := config.BearerToken(r.Header.Get("Authorization"))
+		if !ok {
 			writeErr(w, http.StatusUnauthorized, "missing bearer token")
 			return
 		}
-		token := auth[len(prefix):]
-		for _, k := range keys {
-			if k.Key != token {
-				continue
-			}
-			if need == "readwrite" && k.Scope != "readwrite" {
-				writeErr(w, http.StatusForbidden, "this API key is read-only")
-				return
-			}
-			next(w, r)
+		key, ok := srv.LookupKey(token)
+		if !ok {
+			writeErr(w, http.StatusUnauthorized, "invalid API key")
 			return
 		}
-		writeErr(w, http.StatusUnauthorized, "invalid API key")
+		if need == "readwrite" && key.Scope != "readwrite" {
+			writeErr(w, http.StatusForbidden, "this API key is read-only")
+			return
+		}
+		next(w, r)
 	}
 }
 

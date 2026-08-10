@@ -64,7 +64,9 @@ andino-kb index    -c config.yaml     # one-shot sync (waits for your embedding 
 andino-kb serve    -c config.yaml     # REST + MCP + /metrics on one port
 ```
 
-Point any MCP client at `http://your-host:8180/mcp` (streamable HTTP).
+Point any MCP client at `http://your-host:8180/mcp` (streamable HTTP). The
+default bind is loopback and the transport is plain HTTP — see
+[Security](#security) before exposing it to a network.
 
 **Claude Code**
 
@@ -105,8 +107,9 @@ mcp_servers:
 `store`/`search`/`get`/`list`/`delete` map 1:1 to the semantics of the
 Strands `memory` tool, so a Strands agent can swap Bedrock Knowledge Bases
 for andino-kb without changing its behavior. The same operations exist as
-REST endpoints (`/v1/kb/{kb}/...`) with bearer keys scoped `read` or
-`readwrite`.
+REST endpoints (`/v1/kb/{kb}/...`). Bearer keys scoped `read` or `readwrite`
+govern both interfaces alike: a `read` key is not offered `store` or
+`delete_document` in `tools/list` at all.
 
 ## Configuration
 
@@ -127,6 +130,51 @@ knowledge_bases:
 ```
 
 Config is strict: unknown fields are startup errors, not silent no-ops.
+
+## Security
+
+**Without `server.api_keys`, the server is open.** Every REST endpoint and
+every MCP tool answers any caller that can reach the port. That is a
+deliberate default for the loopback case the bind default assumes
+(`127.0.0.1:8180`), and it is the wrong one the moment you change that bind.
+If the port is reachable by anything but localhost, configure keys.
+
+```yaml
+server:
+  bind: "127.0.0.1:8180"
+  api_keys:
+    - key: "${ANDINO_KB_READ_KEY}"
+      scope: read             # search and reads
+    - key: "${ANDINO_KB_ADMIN_KEY}"
+      scope: readwrite        # additionally store/delete on writable KBs
+```
+
+Keys are passed as `Authorization: Bearer <key>` and compared in constant
+time. Expand them from the environment rather than writing them into the
+file; an unset variable fails validation at startup instead of quietly
+disabling a key.
+
+Scopes apply to REST and MCP equally:
+
+| | `read` | `readwrite` |
+|---|---|---|
+| `GET /v1/kb/...`, `POST .../search` | yes | yes |
+| `POST .../documents`, `DELETE .../documents/{id}`, `POST .../reindex` | 403 | yes |
+| MCP `search`, `get_document`, `list_*` | yes | yes |
+| MCP `store`, `delete_document` | not advertised | yes |
+
+A KB's `writable: true` is a separate axis and both must agree: a
+`readwrite` key still cannot write to a KB that is not writable.
+
+`server.ops_require_auth` covers the operational endpoints. It defaults to
+on whenever `api_keys` is set, because `/metrics` and the per-KB detail of
+`/readyz` name your knowledge bases and count their documents. `/healthz`
+is always open, and `/readyz` always answers the plain `ready` boolean, so
+liveness and readiness probes keep working unauthenticated. Set it to
+`false` if an unauthenticated Prometheus needs to scrape.
+
+There is no TLS and no per-client identity. Terminate TLS in a reverse proxy
+if the traffic leaves the host.
 
 ## Design notes (the hard-won parts)
 

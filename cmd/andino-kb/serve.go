@@ -91,7 +91,9 @@ func runServe(ctx context.Context, cfg *config.Config, wait time.Duration) error
 	}
 	mux.Handle("/v1/", rest.Handler())
 	mux.Handle("/mcp", authMCP(cfg, mcp.NewStreamableHTTPHandler(
-		func(*http.Request) *mcp.Server { return mcpserver.New(a, version) },
+		func(r *http.Request) *mcp.Server {
+			return mcpserver.New(a, version, writesAllowed(cfg, r))
+		},
 		&mcp.StreamableHTTPOptions{Stateless: true},
 	)))
 	ops.Register(mux, a, metrics)
@@ -121,24 +123,44 @@ func runServe(ctx context.Context, cfg *config.Config, wait time.Duration) error
 }
 
 // authMCP guards the MCP endpoint with the same bearer keys as the REST API.
-// Any valid key grants tool access; write tools re-check writability in the
-// app layer. Without configured keys the endpoint is open (localhost use).
+// It only decides whether the request gets in at all; which tools it may use
+// is decided per request by writesAllowed. Without configured keys the
+// endpoint is open (localhost use).
 func authMCP(cfg *config.Config, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		keys := cfg.Server.APIKeys
-		if len(keys) == 0 {
+		if len(cfg.Server.APIKeys) == 0 {
 			next.ServeHTTP(w, r)
 			return
 		}
-		auth := r.Header.Get("Authorization")
-		for _, k := range keys {
-			if auth == "Bearer "+k.Key {
-				next.ServeHTTP(w, r)
-				return
-			}
+		token, ok := config.BearerToken(r.Header.Get("Authorization"))
+		if !ok {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
 		}
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		if _, ok := cfg.Server.LookupKey(token); !ok {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
+}
+
+// writesAllowed reports whether the request's key may use the MCP write
+// tools. It re-reads the header instead of taking a scope threaded through
+// the request context from authMCP: the extra lookup is free next to a search,
+// and it keeps the guarantee local rather than resting on the SDK handing the
+// server factory the very request the middleware saw. Without configured keys
+// the server is open, matching authMCP.
+func writesAllowed(cfg *config.Config, r *http.Request) bool {
+	if len(cfg.Server.APIKeys) == 0 {
+		return true
+	}
+	token, ok := config.BearerToken(r.Header.Get("Authorization"))
+	if !ok {
+		return false
+	}
+	key, ok := cfg.Server.LookupKey(token)
+	return ok && key.Scope == "readwrite"
 }
 
 // startPollers runs a periodic full sync for poll-based sources (git, s3).
