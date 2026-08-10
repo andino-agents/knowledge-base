@@ -42,7 +42,16 @@ func NewMetrics() *Metrics {
 }
 
 // Register adds /healthz, /readyz and /metrics to a mux.
+//
+// /healthz is always open: it is the liveness probe and says nothing about
+// what the server holds. /metrics and the per-KB detail of /readyz name the
+// knowledge bases and count their documents, so both sit behind a key when
+// server.ops_require_auth applies. /readyz still answers the plain ready
+// boolean unauthenticated, which is all a readiness probe needs.
 func Register(mux *http.ServeMux, a *app.App, m *Metrics) {
+	authorized := func(r *http.Request) bool {
+		return a.Config.Server.AuthorizeOps(r.Header.Get("Authorization"))
+	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok\n"))
@@ -63,9 +72,20 @@ func Register(mux *http.ServeMux, a *app.App, m *Metrics) {
 		if !allReady {
 			status = http.StatusServiceUnavailable
 		}
+		body := map[string]any{"ready": allReady}
+		if authorized(r) {
+			body["knowledge_bases"] = detail
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
-		json.NewEncoder(w).Encode(map[string]any{"ready": allReady, "knowledge_bases": detail})
+		json.NewEncoder(w).Encode(body)
 	})
-	mux.Handle("GET /metrics", promhttp.HandlerFor(m.Registry, promhttp.HandlerOpts{}))
+	metrics := promhttp.HandlerFor(m.Registry, promhttp.HandlerOpts{})
+	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
+		if !authorized(r) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		metrics.ServeHTTP(w, r)
+	})
 }

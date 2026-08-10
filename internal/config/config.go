@@ -7,6 +7,7 @@
 package config
 
 import (
+	"crypto/subtle"
 	"fmt"
 	"os"
 	"time"
@@ -24,18 +25,68 @@ type Config struct {
 }
 
 type Server struct {
-	Bind      string   `yaml:"bind"`
-	DataDir   string   `yaml:"data_dir"`
-	APIKeys   []APIKey `yaml:"api_keys"`
-	LogLevel  string   `yaml:"log_level"`
-	LogFormat string   `yaml:"log_format"`
+	Bind    string   `yaml:"bind"`
+	DataDir string   `yaml:"data_dir"`
+	APIKeys []APIKey `yaml:"api_keys"`
+	// OpsRequireAuth gates /metrics and the per-KB detail of /readyz behind a
+	// key. Nil means "follow api_keys": on when keys are configured, off when
+	// they are not. /healthz is always open.
+	OpsRequireAuth *bool  `yaml:"ops_require_auth"`
+	LogLevel       string `yaml:"log_level"`
+	LogFormat      string `yaml:"log_format"`
 }
 
 // APIKey grants access to the REST and MCP APIs. Scope "read" allows search
-// and reads; "readwrite" additionally allows store/delete on writable KBs.
+// and reads; "readwrite" additionally allows store/delete on writable KBs,
+// over both REST and MCP.
 type APIKey struct {
 	Key   string `yaml:"key"`
 	Scope string `yaml:"scope"`
+}
+
+// BearerToken extracts the token from an Authorization header. ok is false
+// when the header is absent or does not carry the "Bearer " prefix.
+func BearerToken(header string) (string, bool) {
+	const prefix = "Bearer "
+	if len(header) <= len(prefix) || header[:len(prefix)] != prefix {
+		return "", false
+	}
+	return header[len(prefix):], true
+}
+
+// LookupKey resolves a bearer token to its configured key. The comparison is
+// constant-time and the loop never breaks early, so neither the value of a
+// key nor its position in the list leaks through timing.
+func (s *Server) LookupKey(token string) (APIKey, bool) {
+	var found APIKey
+	ok := false
+	tok := []byte(token)
+	for _, k := range s.APIKeys {
+		if subtle.ConstantTimeCompare([]byte(k.Key), tok) == 1 {
+			found, ok = k, true
+		}
+	}
+	return found, ok
+}
+
+// AuthorizeOps reports whether an Authorization header may see ops detail.
+func (s *Server) AuthorizeOps(header string) bool {
+	if !s.opsRequiresAuth() {
+		return true
+	}
+	token, ok := BearerToken(header)
+	if !ok {
+		return false
+	}
+	_, ok = s.LookupKey(token)
+	return ok
+}
+
+func (s *Server) opsRequiresAuth() bool {
+	if s.OpsRequireAuth != nil {
+		return *s.OpsRequireAuth
+	}
+	return len(s.APIKeys) > 0
 }
 
 type Storage struct {

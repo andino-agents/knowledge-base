@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.4.0
+
+Auth fixes. **Behavior changes** — read the first two entries before
+upgrading.
+
+- **A `read` key can no longer write over MCP.** `/mcp` authenticated the
+  key but never looked at its scope, while REST enforced it per route, so a
+  read-scoped key could call `store` and `delete_document`. The MCP tool set
+  is now built per request from the caller's scope: a `read` key is not
+  offered the write tools in `tools/list` at all. The KB's own `writable`
+  flag is unchanged and still applies on top.
+- **`/metrics` and the per-KB detail of `/readyz` now require a key** when
+  `api_keys` is configured — they name the knowledge bases and count their
+  documents. `/healthz` stays open and `/readyz` still answers the plain
+  `ready` boolean unauthenticated, so probes keep working. Opt out with
+  `server.ops_require_auth: false`.
+- **Constant-time key comparison** (`crypto/subtle`) in both the REST and
+  MCP guards, replacing plain string equality.
+- Both guards now share one key lookup in `internal/config`, instead of two
+  copies of the loop that had drifted apart.
+- README gained a Security section: what each scope may do over both
+  interfaces, and the fact that the server is wide open without `api_keys`.
+
 ## v0.3.0
 
 Enterprise sources: point andino-kb at the bucket where your company's
