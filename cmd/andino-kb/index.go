@@ -68,6 +68,14 @@ func indexCmd(configPath *string) *cobra.Command {
 				if err := kb.Embedder.WaitReady(ctx, wait); err != nil {
 					return err
 				}
+				// Contextual retrieval calls the chat model, which loads
+				// separately from the embedding one. See serve.go.
+				if chat := kb.Indexer.Contextual; chat != nil {
+					logger.Info("waiting for chat endpoint", "kb", name, "model", chat.Model)
+					if err := chat.WaitReady(ctx, wait); err != nil {
+						return err
+					}
+				}
 				if err := syncKB(ctx, name, kb, logger); err != nil {
 					return fmt.Errorf("kb %s: %w", name, err)
 				}
@@ -82,7 +90,7 @@ func indexCmd(configPath *string) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&kbFilter, "kb", "", "only sync this knowledge base")
 	cmd.Flags().BoolVar(&rebuild, "rebuild", false, "drop and re-embed the knowledge base from scratch")
-	cmd.Flags().DurationVar(&wait, "wait", 10*time.Minute, "how long to wait for the embeddings endpoint")
+	cmd.Flags().DurationVar(&wait, "wait", 10*time.Minute, "how long to wait for the embedding and chat endpoints")
 	return cmd
 }
 
