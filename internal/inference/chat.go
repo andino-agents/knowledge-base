@@ -112,7 +112,60 @@ func (c *Chat) complete(ctx context.Context, system string, userContent any) (st
 	}
 }
 
+// WaitReady polls the endpoint with a real minimal completion until the
+// backend answers for this model, or the timeout expires. Router-style servers
+// load models lazily and answer 503 "Loading model" for minutes after a
+// restart; index-time contextualisation must not start before the chat model is
+// actually live. Mirrors Embedder.WaitReady.
+func (c *Chat) WaitReady(ctx context.Context, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		err := c.probe(probeCtx)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("chat endpoint %s not ready after %s: %w", c.BaseURL, timeout, err)
+		}
+		c.logger().Info("waiting for chat endpoint", "base_url", c.BaseURL, "model", c.Model, "error", err)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(5 * time.Second):
+		}
+	}
+}
+
+// probe asks the backend for a one-token completion and only checks that the
+// request was accepted. It deliberately ignores the response body: a
+// thinking-first model can spend a one-token budget entirely on reasoning and
+// return empty content, which is a real error for indexing but says nothing
+// about whether the model is loaded.
+func (c *Chat) probe(ctx context.Context) error {
+	payload := map[string]any{
+		"model":       c.Model,
+		"messages":    []map[string]any{{"role": "user", "content": "ping"}},
+		"max_tokens":  1,
+		"temperature": 0,
+	}
+	for k, v := range c.ExtraBody {
+		payload[k] = v
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	_, _, err = c.doRequestOpts(ctx, body, true)
+	return err
+}
+
 func (c *Chat) doRequest(ctx context.Context, body []byte) (text string, retryable bool, err error) {
+	return c.doRequestOpts(ctx, body, false)
+}
+
+func (c *Chat) doRequestOpts(ctx context.Context, body []byte, probeOnly bool) (text string, retryable bool, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return "", false, err
@@ -130,6 +183,9 @@ func (c *Chat) doRequest(ctx context.Context, body []byte) (text string, retryab
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		retryable := resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests
 		return "", retryable, fmt.Errorf("HTTP %d from %s: %s", resp.StatusCode, c.BaseURL, snippet)
+	}
+	if probeOnly {
+		return "", false, nil
 	}
 	var parsed chatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {

@@ -36,7 +36,7 @@ func serveCmd(configPath *string) *cobra.Command {
 			return runServe(cmd.Context(), cfg, wait)
 		},
 	}
-	cmd.Flags().DurationVar(&wait, "wait", 10*time.Minute, "how long to wait for embedding endpoints at startup")
+	cmd.Flags().DurationVar(&wait, "wait", 10*time.Minute, "how long to wait for the embedding and chat endpoints at startup")
 	return cmd
 }
 
@@ -65,17 +65,23 @@ func runServe(ctx context.Context, cfg *config.Config, wait time.Duration) error
 				logger.Error("embedding backend never became ready", "kb", name, "error", err)
 				return
 			}
-			a.SetReady(name, fmt.Errorf("initial sync running"))
-			for _, src := range kb.Sources {
-				stats, err := kb.Indexer.SyncSource(ctx, src)
-				if err != nil {
-					a.SetReady(name, fmt.Errorf("initial sync failed: %w", err))
-					logger.Error("initial sync failed", "kb", name, "source", src.Name(), "error", err)
+			// Contextual retrieval calls the CHAT model, which on a router
+			// loads separately from (and much slower than) the embedding
+			// model. Waiting only for embeddings let the initial sync start
+			// against a chat endpoint still answering 503 "Loading model"
+			// (or 400 "model is not loaded", if it has not been asked for).
+			if chat := kb.Indexer.Contextual; chat != nil {
+				a.SetReady(name, fmt.Errorf("waiting for chat backend"))
+				if err := chat.WaitReady(ctx, wait); err != nil {
+					a.SetReady(name, err)
+					logger.Error("chat backend never became ready", "kb", name, "error", err)
 					return
 				}
-				metrics.IndexOps.WithLabelValues(name, "indexed").Add(float64(stats.Indexed))
-				metrics.IndexOps.WithLabelValues(name, "deleted").Add(float64(stats.Deleted))
-				metrics.IndexOps.WithLabelValues(name, "failed").Add(float64(stats.Failed))
+			}
+			a.SetReady(name, fmt.Errorf("initial sync running"))
+			if err := initialSync(ctx, name, kb, metrics, logger); err != nil {
+				a.SetReady(name, fmt.Errorf("initial sync failed: %w", err))
+				return
 			}
 			a.SetReady(name, nil)
 			logger.Info("knowledge base ready", "kb", name)
@@ -120,6 +126,60 @@ func runServe(ctx context.Context, cfg *config.Config, wait time.Duration) error
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancelShutdown()
 	return srv.Shutdown(shutdownCtx)
+}
+
+// initialSyncAttempts bounds how many times the whole initial sync is retried
+// before the KB is declared unready. The sync used to be one-shot: a single
+// transient backend failure (a model still loading, or evicted by a router
+// sitting at its model cap) aborted it, and the KB then stayed unready and
+// silent until someone restarted the service by hand.
+const initialSyncAttempts = 5
+
+// initialSyncBackoff is the pause before retry N. Deliberately long: what this
+// waits out is a model load, which takes minutes, not milliseconds.
+func initialSyncBackoff(attempt int) time.Duration {
+	d := 15 * time.Second << attempt
+	if d > 2*time.Minute {
+		d = 2 * time.Minute
+	}
+	return d
+}
+
+// initialSync indexes every source of a KB, retrying the whole pass on error.
+// Sources are re-synced from the top on retry; that is cheap because syncing is
+// incremental and already-indexed documents are skipped by manifest.
+func initialSync(ctx context.Context, name string, kb *app.KB, metrics *ops.Metrics, logger *slog.Logger) error {
+	var lastErr error
+	for attempt := 0; attempt < initialSyncAttempts; attempt++ {
+		lastErr = nil
+		for _, src := range kb.Sources {
+			stats, err := kb.Indexer.SyncSource(ctx, src)
+			if err != nil {
+				lastErr = fmt.Errorf("source %s: %w", src.Name(), err)
+				logger.Error("initial sync failed", "kb", name, "source", src.Name(),
+					"attempt", attempt+1, "of", initialSyncAttempts, "error", err)
+				break
+			}
+			metrics.IndexOps.WithLabelValues(name, "indexed").Add(float64(stats.Indexed))
+			metrics.IndexOps.WithLabelValues(name, "deleted").Add(float64(stats.Deleted))
+			metrics.IndexOps.WithLabelValues(name, "failed").Add(float64(stats.Failed))
+		}
+		if lastErr == nil {
+			return nil
+		}
+		if attempt == initialSyncAttempts-1 {
+			break
+		}
+		delay := initialSyncBackoff(attempt)
+		logger.Warn("retrying initial sync", "kb", name, "delay", delay)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+	}
+	logger.Error("initial sync gave up", "kb", name, "attempts", initialSyncAttempts, "error", lastErr)
+	return lastErr
 }
 
 // authMCP guards the MCP endpoint with the same bearer keys as the REST API.
