@@ -22,3 +22,22 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Discord's native GitHub webhook announces the tag but drops the release
+      # body, so the notes are posted from here instead.
+      - name: Announce on Discord
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        if: env.WEBHOOK != ''
+        run: |
+          release=$(gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json body,url)
+          body=$(jq -r .body <<<"$release")
+          url=$(jq -r .url <<<"$release")
+          # An embed description caps at 4096 chars; leave room for the link.
+          [ ${#body} -gt 3700 ] && body="${body:0:3700}…"
+          jq -n --arg title "${GITHUB_REPOSITORY##*/} $TAG" --arg url "$url" --arg body "$body" \
+            '{username: "Andino", embeds: [{title: $title, url: $url, color: 3447003,
+              description: ($body + "\n\n[Full release notes](" + $url + ")")}]}' \
+            | curl -sS -f --retry 3 -X POST -H 'content-type: application/json' -d @- "$WEBHOOK"
