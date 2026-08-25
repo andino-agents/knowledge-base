@@ -14,7 +14,7 @@ need durable, searchable memory.
 ┌──────────────┐      ┌──────────────────────┐      ┌──────────────────────┐
 │ local folder  │ ──▶ │ incremental indexer   │      │ Claude Code / opencode│
 │ git repo      │ ──▶ │ pdf/docx + OCR (VLM)  │      │  via MCP (HTTP)       │
-│ s3 / minio    │ ──▶ │ SQLite (1 file/KB)    │ ◀──▶ │ autonomous agents     │
+│ s3 / minio    │ ──▶ │ SQLite / pgvector     │ ◀──▶ │ autonomous agents     │
 │ agent writes  │ ──▶ │ hybrid + contextual   │      │  via MCP or REST      │
 └──────────────┘      └──────────────────────┘      └──────────────────────┘
 ```
@@ -29,7 +29,8 @@ first query). andino-kb is the opposite trade:
   No chat UI. Tool descriptions are written for agents.
 - **One static binary, one SQLite file per knowledge base** — pure Go
   (`CGO_ENABLED=0`), no external services, no daemons to babysit. Runs on a
-  VM, a homelab, or an air-gapped host.
+  VM, a homelab, or an air-gapped host. Swap in a shared **pgvector**
+  database for scale without touching the engine.
 - **Declarative pipelines** — sources are config, not clicks: a local
   directory (with a filesystem watcher), a git repository (shallow clone +
   poll), an S3/MinIO bucket (standard AWS credential chain, custom
@@ -217,9 +218,11 @@ Vector search is a brute-force cosine scan held in memory (embeddings
 persist as BLOBs in SQLite). At the supported scale — up to ~100k chunks per
 KB — that is single-digit milliseconds in pure Go with zero moving parts;
 measured: **14 ms per hybrid query over 10k chunks × 1024 dims**, ~30 ms
-end-to-end including query embedding on a local llama.cpp. The storage layer
-is an interface: pgvector, OpenSearch and S3 Vectors providers can register
-without touching the engine.
+end-to-end including query embedding on a local llama.cpp. Switch the storage
+provider to **pgvector** (a shared Postgres database, one schema per KB, real
+HNSW indexes) when that scale no longer fits in a single binary. The storage
+layer is an interface: pgvector, OpenSearch and S3 Vectors providers can
+register without touching the engine.
 
 ## Operations
 
@@ -231,7 +234,7 @@ existing RAG on recall.
 
 ## Roadmap
 
-- pgvector and OpenSearch storage providers
+- OpenSearch storage provider
 - Native Strands tool package in the andino agent-runtime
 
 ## License

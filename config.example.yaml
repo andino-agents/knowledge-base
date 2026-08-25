@@ -20,7 +20,12 @@ server:
   log_format: text              # text | json
 
 storage:
-  provider: sqlite              # the only provider in v0.1
+  # sqlite: one file per knowledge base, zero dependencies (default).
+  # postgres: pgvector; a `dsn` is required. Each KB is isolated in its own
+  #   schema, so several KBs share one database without colliding.
+  provider: sqlite
+  # provider: postgres
+  # dsn: "postgres://user:pass@localhost:5432/andino_kb?sslmode=disable"
 
 inference:
   backends:

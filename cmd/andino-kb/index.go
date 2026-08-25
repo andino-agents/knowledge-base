@@ -13,6 +13,7 @@ import (
 
 	"github.com/andino-agents/knowledge-base/internal/app"
 	"github.com/andino-agents/knowledge-base/internal/config"
+	_ "github.com/andino-agents/knowledge-base/internal/store/pgvector"
 	_ "github.com/andino-agents/knowledge-base/internal/store/sqlite"
 )
 

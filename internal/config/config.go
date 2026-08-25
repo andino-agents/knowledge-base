@@ -308,6 +308,11 @@ func (c *Config) Validate() error {
 	if c.Server.DataDir == "" {
 		return fmt.Errorf("server.data_dir is required")
 	}
+	if c.Storage.Provider == "postgres" {
+		if dsn, ok := c.Storage.Options["dsn"].(string); !ok || dsn == "" {
+			return fmt.Errorf("storage: dsn is required for provider postgres (a postgres:// connection string)")
+		}
+	}
 	for _, k := range c.Server.APIKeys {
 		if k.Key == "" {
 			return fmt.Errorf("server.api_keys: empty key (unset environment variable?)")
