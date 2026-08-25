@@ -45,6 +45,11 @@ type Hit struct {
 	store.Hit
 	KnowledgeBase string  `json:"knowledge_base"`
 	Relevance     float64 `json:"relevance"`
+	// RerankScore is the cross-encoder score when reranking ordered the
+	// results, and is nil (omitted) when fusion did. Exposed alongside
+	// fts_rank/vec_rank so a caller can tell which path won without a second
+	// query — the visibility #14 asked for.
+	RerankScore *float64 `json:"rerank_score,omitempty"`
 }
 
 type App struct {
@@ -355,7 +360,10 @@ func (a *App) Search(ctx context.Context, kbName, query string, opts SearchOpts)
 				if score < minScore {
 					continue
 				}
-				hits = append(hits, Hit{Hit: h, KnowledgeBase: kbName, Relevance: score})
+				hit := Hit{Hit: h, KnowledgeBase: kbName, Relevance: score}
+				rs := score
+				hit.RerankScore = &rs
+				hits = append(hits, hit)
 			}
 			return hits, nil
 		}
