@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.5.0
+
+pgvector storage provider. andino-kb can now point at a shared PostgreSQL
+database instead of one SQLite file per knowledge base.
+
+- **pgvector provider** (PostgreSQL + pgvector): tsvector full-text for the
+  keyword leg, an HNSW index for the dense leg, RRF fusion in Go — the same
+  engine sqlite runs. Each KB is isolated in its own schema, so several KBs
+  share one database without colliding; the embedding model and dimensions
+  are recorded on open and a mismatch is a hard error (rebuild from scratch)
+  rather than silent data drift. The storage layer is an interface, so this
+  is a register-and-go change with no engine edits.
+- **`rerank_score` in search results**: the response now carries the
+  cross-encoder score so a caller can tell whether reranking or fusion ordered
+  the results, without a second query.
+- **Serve waits for the chat backend** before indexing, not just embeddings,
+  so contextual retrieval has its model loaded.
+
+SQLite is unchanged and still the default provider.
+
 ## v0.4.0
 
 Auth fixes. **Behavior changes** — read the first two entries before
