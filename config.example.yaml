@@ -21,11 +21,13 @@ server:
 
 storage:
   # sqlite: one file per knowledge base, zero dependencies (default).
-  # postgres: pgvector; a `dsn` is required. Each KB is isolated in its own
-  #   schema, so several KBs share one database without colliding.
+  # postgres: pgvector; options.dsn is required. Each KB is isolated in its
+  #   own schema, so several KBs share one database without colliding.
+  # See docs/configuration.md.
   provider: sqlite
   # provider: postgres
-  # dsn: "postgres://user:pass@localhost:5432/andino_kb?sslmode=disable"
+  # options:
+  #   dsn: "postgres://user:pass@localhost:5432/andino_kb?sslmode=disable"
 
 inference:
   backends:
@@ -50,7 +52,7 @@ inference:
 
 defaults:
   chunking:
-    strategy: markdown          # markdown | plaintext | code
+    strategy: markdown          # accepted, unused: extractor is chosen by extension
     max_tokens: 512
     overlap_tokens: 64
   embedding_model: qwen3-embed

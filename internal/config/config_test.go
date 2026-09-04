@@ -43,6 +43,16 @@ knowledge_bases:
         type: git
         url: "https://example.com/docs.git"
         paths: ["docs/**/*.md"]
+  - name: bucket-docs
+    sources:
+      - name: policies
+        type: s3
+        bucket: corp-documents
+        prefix: policies/
+        paths: ["**/*.pdf"]
+        poll_interval: 10m
+        endpoint: "http://minio.internal:9000"
+        path_style: true
 `
 
 func write(t *testing.T, content string) string {
@@ -80,6 +90,10 @@ func TestLoadValid(t *testing.T) {
 	if git.Branch != "main" || git.PollInterval.Minutes() != 5 {
 		t.Errorf("git defaults not applied: %+v", git)
 	}
+	s3 := cfg.KnowledgeBases[3].Sources[0]
+	if s3.Bucket != "corp-documents" || s3.Prefix != "policies/" || !s3.PathStyle {
+		t.Errorf("s3 fields not loaded: %+v", s3)
+	}
 	if _, _, err := cfg.EmbeddingModelFor(&kb); err != nil {
 		t.Errorf("EmbeddingModelFor: %v", err)
 	}
@@ -97,6 +111,8 @@ func TestLoadErrors(t *testing.T) {
 		"bad_glob":            {find: `include: ["**/*.md"]`, replace: `include: ["[/*.md"]`, wantErr: "invalid glob"},
 		"git_fields_on_local": {find: "        watch: true", replace: "        watch: true\n        url: \"https://x\"", wantErr: "git fields"},
 		"unknown_source_type": {find: "type: git", replace: "type: svn", wantErr: "unknown type"},
+		"s3_needs_bucket":     {find: "        bucket: corp-documents\n", replace: "        bucket: \"\"\n", wantErr: "bucket is required"},
+		"localdir_on_s3":      {find: "        path_style: true", replace: "        path_style: true\n        path: /tmp/nope", wantErr: "localdir fields"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
