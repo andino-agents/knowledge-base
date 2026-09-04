@@ -14,7 +14,7 @@ labels: bug
 
 - andino-kb version (`andino-kb version`):
 - OS/arch:
-- Storage provider: sqlite
+- Storage provider: sqlite | postgres
 - Inference backend (llama.cpp/vLLM/Ollama/...):
 - Relevant config (redact keys/paths):
 

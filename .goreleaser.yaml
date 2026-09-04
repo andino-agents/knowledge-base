@@ -16,7 +16,7 @@ builds:
 
 archives:
   - formats: [tar.gz]
-    files: [LICENSE, README.md, config.example.yaml, deploy/andino-kb.service]
+    files: [LICENSE, README.md, config.example.yaml, deploy/andino-kb.service, docs]
 
 checksum:
   name_template: checksums.txt

@@ -446,8 +446,23 @@ func validateSource(kb string, s Source) error {
 		if s.Path != "" || len(s.Include) > 0 || len(s.Exclude) > 0 || s.Watch || s.DebounceMS != 2000 && s.DebounceMS != 0 {
 			return fmt.Errorf("%s: localdir fields set on a git source", prefix)
 		}
+	case "s3":
+		if s.Bucket == "" {
+			return fmt.Errorf("%s: bucket is required for s3", prefix)
+		}
+		for _, g := range s.Paths {
+			if !doublestar.ValidatePattern(g) {
+				return fmt.Errorf("%s: invalid glob %q", prefix, g)
+			}
+		}
+		if s.Path != "" || len(s.Include) > 0 || len(s.Exclude) > 0 || s.Watch || s.DebounceMS != 2000 && s.DebounceMS != 0 {
+			return fmt.Errorf("%s: localdir fields set on an s3 source", prefix)
+		}
+		if s.URL != "" || s.Branch != "" || s.TokenEnv != "" {
+			return fmt.Errorf("%s: git fields set on an s3 source", prefix)
+		}
 	default:
-		return fmt.Errorf("%s: unknown type %q (localdir | git)", prefix, s.Type)
+		return fmt.Errorf("%s: unknown type %q (localdir | git | s3)", prefix, s.Type)
 	}
 	return nil
 }
