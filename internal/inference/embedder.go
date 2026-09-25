@@ -1,5 +1,5 @@
-// Package inference holds the OpenAI-compatible clients: embeddings now,
-// reranking in a later phase.
+// Package inference holds the inference clients: OpenAI-compatible HTTP for
+// embeddings, reranking and chat, and Bedrock for embeddings and chat.
 package inference
 
 import (
@@ -27,8 +27,10 @@ type Embedder struct {
 	Dimensions int
 	BatchSize  int
 	MaxRetries int
-	Client     *http.Client
-	Logger     *slog.Logger
+	// Bedrock, when set, replaces the HTTP call; BaseURL and APIKey are unused.
+	Bedrock *Bedrock
+	Client  *http.Client
+	Logger  *slog.Logger
 }
 
 type embeddingRequest struct {
@@ -78,19 +80,33 @@ func (e *Embedder) Embed(ctx context.Context, texts []string) ([][]float32, erro
 	return out, nil
 }
 
-func (e *Embedder) embedBatch(ctx context.Context, texts []string) ([][]float32, error) {
+func (e *Embedder) endpoint() string {
+	if e.Bedrock != nil {
+		return e.Bedrock.endpoint()
+	}
+	return e.BaseURL
+}
+
+// request makes one attempt against whichever transport the backend uses.
+func (e *Embedder) request(ctx context.Context, texts []string) ([][]float32, bool, error) {
+	if e.Bedrock != nil {
+		return e.Bedrock.embed(ctx, e.Model, e.Dimensions, texts)
+	}
 	body, err := json.Marshal(embeddingRequest{Model: e.Model, Input: texts})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
+	return e.doRequest(ctx, body, len(texts))
+}
 
+func (e *Embedder) embedBatch(ctx context.Context, texts []string) ([][]float32, error) {
 	maxRetries := e.MaxRetries
 	if maxRetries <= 0 {
 		maxRetries = 4
 	}
 	var lastErr error
 	for attempt := 0; ; attempt++ {
-		vecs, retryable, err := e.doRequest(ctx, body, len(texts))
+		vecs, retryable, err := e.request(ctx, texts)
 		if err == nil {
 			return vecs, nil
 		}
@@ -174,9 +190,9 @@ func (e *Embedder) WaitReady(ctx context.Context, timeout time.Duration) error {
 			return nil
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("embeddings endpoint %s not ready after %s: %w", e.BaseURL, timeout, err)
+			return fmt.Errorf("embeddings endpoint %s not ready after %s: %w", e.endpoint(), timeout, err)
 		}
-		e.logger().Info("waiting for embeddings endpoint", "base_url", e.BaseURL, "error", err)
+		e.logger().Info("waiting for embeddings endpoint", "base_url", e.endpoint(), "error", err)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -186,8 +202,7 @@ func (e *Embedder) WaitReady(ctx context.Context, timeout time.Duration) error {
 }
 
 func (e *Embedder) embedProbe(ctx context.Context) ([][]float32, error) {
-	body, _ := json.Marshal(embeddingRequest{Model: e.Model, Input: []string{"ping"}})
-	vecs, _, err := e.doRequest(ctx, body, 1)
+	vecs, _, err := e.request(ctx, []string{"ping"})
 	return vecs, err
 }
 

@@ -102,10 +102,22 @@ type Inference struct {
 }
 
 type Backend struct {
-	Name    string `yaml:"name"`
+	Name string `yaml:"name"`
+	// Type is openai (the default: any OpenAI-compatible server) or bedrock.
+	Type    string `yaml:"type"`
 	BaseURL string `yaml:"base_url"`
 	APIKey  string `yaml:"api_key"`
+	// Region is required for bedrock and meaningless otherwise.
+	Region string `yaml:"region"`
 }
+
+// IsBedrock reports whether the backend is reached through the AWS SDK.
+func (b Backend) IsBedrock() bool { return b.Type == BackendBedrock }
+
+const (
+	BackendOpenAI  = "openai"
+	BackendBedrock = "bedrock"
+)
 
 type EmbeddingModel struct {
 	Name       string `yaml:"name"`
@@ -323,9 +335,29 @@ func (c *Config) Validate() error {
 	}
 
 	backends := map[string]bool{}
+	bedrock := map[string]bool{}
 	for _, b := range c.Inference.Backends {
-		if b.Name == "" || b.BaseURL == "" {
-			return fmt.Errorf("inference.backends: name and base_url are required")
+		if b.Name == "" {
+			return fmt.Errorf("inference.backends: name is required")
+		}
+		switch b.Type {
+		case "", BackendOpenAI:
+			if b.BaseURL == "" {
+				return fmt.Errorf("inference.backends[%s]: base_url is required", b.Name)
+			}
+		case BackendBedrock:
+			if b.Region == "" {
+				return fmt.Errorf("inference.backends[%s]: bedrock needs a region", b.Name)
+			}
+			// Credentials come from the AWS default chain. A key here would be
+			// ignored, and a config that looks authenticated but is not is worse
+			// than one that refuses to load.
+			if b.BaseURL != "" || b.APIKey != "" {
+				return fmt.Errorf("inference.backends[%s]: bedrock takes no base_url or api_key; credentials come from the AWS environment", b.Name)
+			}
+			bedrock[b.Name] = true
+		default:
+			return fmt.Errorf("inference.backends[%s]: type %q must be openai or bedrock", b.Name, b.Type)
 		}
 		if backends[b.Name] {
 			return fmt.Errorf("inference.backends: duplicate name %q", b.Name)
@@ -355,6 +387,9 @@ func (c *Config) Validate() error {
 		}
 		if !backends[m.Backend] {
 			return fmt.Errorf("inference.rerank_models[%s]: unknown backend %q", m.Name, m.Backend)
+		}
+		if bedrock[m.Backend] {
+			return fmt.Errorf("inference.rerank_models[%s]: reranking is not supported on a bedrock backend", m.Name)
 		}
 		rerankModels[m.Name] = true
 	}

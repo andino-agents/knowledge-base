@@ -78,6 +78,11 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*App, er
 			a.Close()
 			return nil, err
 		}
+		embedTransport, err := BedrockFor(ctx, backend)
+		if err != nil {
+			a.Close()
+			return nil, err
+		}
 		embedder := &inference.Embedder{
 			BaseURL:    backend.BaseURL,
 			APIKey:     backend.APIKey,
@@ -85,6 +90,7 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*App, er
 			Dimensions: model.Dimensions,
 			BatchSize:  model.BatchSize,
 			MaxRetries: model.MaxRetries,
+			Bedrock:    embedTransport,
 			Logger:     logger,
 		}
 		providerCfg := map[string]any{"data_dir": cfg.Server.DataDir}
@@ -151,12 +157,17 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*App, er
 			if err != nil {
 				return nil, err
 			}
+			chatTransport, err := BedrockFor(ctx, chatBackend)
+			if err != nil {
+				return nil, err
+			}
 			return &inference.Chat{
 				BaseURL:   chatBackend.BaseURL,
 				APIKey:    chatBackend.APIKey,
 				Model:     chatModel.Model,
 				MaxTokens: chatModel.MaxTokens,
 				ExtraBody: chatModel.ExtraBody,
+				Bedrock:   chatTransport,
 				Logger:    logger,
 			}, nil
 		}
@@ -481,4 +492,17 @@ func (a *App) DeleteDocument(ctx context.Context, kbName, id string) error {
 		return err // store.ErrNotFound propagates for a proper 404
 	}
 	return kb.Store.DeleteDocument(ctx, config.ManagedSourceName, id)
+}
+
+// BedrockFor returns the Bedrock transport for a backend of that type, and nil
+// for an OpenAI-compatible one, whose clients speak HTTP themselves.
+func BedrockFor(ctx context.Context, b config.Backend) (*inference.Bedrock, error) {
+	if !b.IsBedrock() {
+		return nil, nil
+	}
+	br, err := inference.NewBedrock(ctx, b.Region)
+	if err != nil {
+		return nil, fmt.Errorf("backend %s: %w", b.Name, err)
+	}
+	return br, nil
 }

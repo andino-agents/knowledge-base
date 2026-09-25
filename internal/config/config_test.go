@@ -113,6 +113,13 @@ func TestLoadErrors(t *testing.T) {
 		"unknown_source_type": {find: "type: git", replace: "type: svn", wantErr: "unknown type"},
 		"s3_needs_bucket":     {find: "        bucket: corp-documents\n", replace: "        bucket: \"\"\n", wantErr: "bucket is required"},
 		"localdir_on_s3":      {find: "        path_style: true", replace: "        path_style: true\n        path: /tmp/nope", wantErr: "localdir fields"},
+		"openai_needs_url":    {find: `      base_url: "http://127.0.0.1:8080/v1"` + "\n", replace: "", wantErr: "base_url is required"},
+		"unknown_backend":     {find: "    - name: local-llama\n", replace: "    - name: local-llama\n      type: vertex\n", wantErr: "must be openai or bedrock"},
+		"bedrock_needs_region": {find: `      base_url: "http://127.0.0.1:8080/v1"` + "\n      api_key: \"k\"\n",
+			replace: "      type: bedrock\n", wantErr: "needs a region"},
+		// A key that would be ignored makes a config look authenticated when it is not.
+		"bedrock_refuses_key": {find: `      base_url: "http://127.0.0.1:8080/v1"` + "\n",
+			replace: "      type: bedrock\n      region: us-east-1\n", wantErr: "takes no base_url or api_key"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -205,5 +212,29 @@ func TestAuthorizeOps(t *testing.T) {
 				t.Fatalf("AuthorizeOps(%q) = %v, want %v", tc.header, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestBedrockBackendLoads(t *testing.T) {
+	t.Setenv("TEST_ANDINO_KEY", "sekrit")
+	mutated := strings.Replace(validYAML, `      base_url: "http://127.0.0.1:8080/v1"`+"\n      api_key: \"k\"\n",
+		"      type: bedrock\n      region: us-east-1\n", 1)
+	cfg, err := Load(write(t, mutated))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b := cfg.Inference.Backends[0]; !b.IsBedrock() || b.Region != "us-east-1" {
+		t.Fatalf("backend not read as bedrock: %+v", b)
+	}
+}
+
+func TestRerankOnBedrockIsRefusedAtLoad(t *testing.T) {
+	t.Setenv("TEST_ANDINO_KEY", "sekrit")
+	mutated := strings.Replace(validYAML, `      base_url: "http://127.0.0.1:8080/v1"`+"\n      api_key: \"k\"\n",
+		"      type: bedrock\n      region: us-east-1\n", 1)
+	mutated = strings.Replace(mutated, "  embedding_models:", "  rerank_models:\n    - name: rr\n      backend: local-llama\n      model: x\n  embedding_models:", 1)
+	_, err := Load(write(t, mutated))
+	if err == nil || !strings.Contains(err.Error(), "not supported on a bedrock backend") {
+		t.Fatalf("want the rerank refusal at load, not at the first search: %v", err)
 	}
 }

@@ -68,8 +68,9 @@ DSN lives under `options`.
 
 ## `inference`
 
-Any OpenAI-compatible endpoint: llama.cpp, vLLM, Ollama, OpenAI, Bedrock
-via a proxy.
+Two backend types. `openai`, the default, is any OpenAI-compatible endpoint:
+llama.cpp, vLLM, Ollama, OpenAI. `bedrock` calls Amazon Bedrock directly
+through the AWS SDK, with no proxy in between.
 
 ```yaml
 inference:
@@ -87,6 +88,58 @@ inference:
   rerank_models: []             # optional /v1/rerank
   chat_models: []               # contextual retrieval and OCR
 ```
+
+### Backends
+
+| Field | Notes |
+|---|---|
+| `name` | Required. Models refer to it. |
+| `type` | `openai` (default) or `bedrock`. |
+| `base_url`, `api_key` | `openai` only, and `base_url` is required there. |
+| `region` | `bedrock` only, and required there. |
+
+A `bedrock` backend has no key of its own: credentials come from the AWS
+default chain (environment, shared profile, or the instance role on a VM).
+Setting `base_url` or `api_key` on it is a load error rather than a silently
+ignored field.
+
+```yaml
+inference:
+  backends:
+    - name: aws
+      type: bedrock
+      region: us-east-1
+  embedding_models:
+    - name: titan
+      backend: aws
+      model: amazon.titan-embed-text-v2:0
+      dimensions: 1024          # Titan v2 serves 256, 512 or 1024
+  chat_models:
+    - name: summary
+      backend: aws
+      model: us.anthropic.claude-haiku-4-5-20251001-v1:0
+      max_tokens: 200
+```
+
+What Bedrock supports, and what it does not:
+
+- **Embeddings: Titan Text Embeddings v2 only.** It takes the output size
+  as a request field, so `dimensions` is honoured rather than assumed. Other
+  Bedrock embedding models are refused at the first call with a clear error.
+  Titan embeds one text per request, so `batch_size` has no effect.
+- **Chat: any model the Converse API serves**, including vision models for
+  OCR (png, jpeg, gif and webp). `extra_body` travels as
+  `additionalModelRequestFields`. No `temperature` is sent: recent Anthropic
+  models on Bedrock reject it.
+- **Reranking: not supported.** A rerank model on a `bedrock` backend is a
+  load error.
+- The IAM principal needs `bedrock:InvokeModel` on the embedding model and
+  `bedrock:Converse` (granted by `bedrock:InvokeModel`) on the chat model,
+  plus model access enabled for both in the account.
+
+Retries follow the same rule as HTTP: throttling and server-side errors
+retry with backoff, validation and permission errors fail at once. The SDK's
+own retries are off, so attempts are not multiplied.
 
 ### Embedding models
 
@@ -109,7 +162,7 @@ answers.
 |---|---|---|
 | `name`, `model`, `backend` | required | |
 | `max_tokens` | `200` | |
-| `extra_body` | none | Merged into `/v1/chat/completions`. |
+| `extra_body` | none | Merged into `/v1/chat/completions`; on Bedrock, sent as `additionalModelRequestFields`. |
 
 Thinking-first models spend `max_tokens` on reasoning and return empty
 content, which is a hard error at index time. Disable thinking:

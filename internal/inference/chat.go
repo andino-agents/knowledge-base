@@ -13,9 +13,10 @@ import (
 	"time"
 )
 
-// Chat is a minimal OpenAI-compatible /v1/chat/completions client for
-// index-time work (contextual retrieval). Same failure contract as the
-// embedder: transient errors retry with backoff, everything else propagates.
+// Chat is a minimal chat client for index-time work (contextual retrieval and
+// OCR), over OpenAI-compatible /v1/chat/completions or Bedrock Converse. Same
+// failure contract as the embedder: transient errors retry with backoff,
+// everything else propagates.
 type Chat struct {
 	BaseURL    string
 	APIKey     string
@@ -23,10 +24,13 @@ type Chat struct {
 	MaxTokens  int
 	MaxRetries int
 	// ExtraBody is merged into every request body (provider-specific knobs
-	// like chat_template_kwargs).
+	// like chat_template_kwargs). On Bedrock it travels as
+	// additionalModelRequestFields.
 	ExtraBody map[string]any
-	Client    *http.Client
-	Logger    *slog.Logger
+	// Bedrock, when set, replaces the HTTP call; BaseURL and APIKey are unused.
+	Bedrock *Bedrock
+	Client  *http.Client
+	Logger  *slog.Logger
 }
 
 type chatResponse struct {
@@ -54,21 +58,42 @@ func (c *Chat) logger() *slog.Logger {
 
 // Complete sends one system+user exchange and returns the trimmed response.
 func (c *Chat) Complete(ctx context.Context, system, user string) (string, error) {
-	return c.complete(ctx, system, any(user))
+	return c.complete(ctx, system, user, nil, "")
 }
 
-// CompleteWithImage sends a user turn carrying an image (OpenAI content-array
-// format with a base64 data URI). The chat model must be vision-capable.
+// CompleteWithImage sends a user turn carrying an image. The chat model must be
+// vision-capable.
 func (c *Chat) CompleteWithImage(ctx context.Context, system, user string, image []byte, mime string) (string, error) {
-	dataURI := "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(image)
-	content := []map[string]any{
-		{"type": "text", "text": user},
-		{"type": "image_url", "image_url": map[string]any{"url": dataURI}},
-	}
-	return c.complete(ctx, system, any(content))
+	return c.complete(ctx, system, user, image, mime)
 }
 
-func (c *Chat) complete(ctx context.Context, system string, userContent any) (string, error) {
+func (c *Chat) endpoint() string {
+	if c.Bedrock != nil {
+		return c.Bedrock.endpoint()
+	}
+	return c.BaseURL
+}
+
+// attempt returns one try against whichever transport the backend uses, so the
+// retry loop and the probe are shared.
+func (c *Chat) attempt(system, user string, image []byte, mime string) (func(context.Context) (string, bool, error), error) {
+	if c.Bedrock != nil {
+		return func(ctx context.Context) (string, bool, error) {
+			text, retryable, err := c.Bedrock.converse(ctx, c, system, user, image, mime, c.MaxTokens)
+			if err == nil && text == "" {
+				return "", false, fmt.Errorf("empty content in response from %s", c.endpoint())
+			}
+			return text, retryable, err
+		}, nil
+	}
+	var userContent any = user
+	if image != nil {
+		dataURI := "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(image)
+		userContent = []map[string]any{
+			{"type": "text", "text": user},
+			{"type": "image_url", "image_url": map[string]any{"url": dataURI}},
+		}
+	}
 	payload := map[string]any{
 		"model": c.Model,
 		"messages": []map[string]any{
@@ -85,16 +110,23 @@ func (c *Chat) complete(ctx context.Context, system string, userContent any) (st
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
+		return nil, err
+	}
+	return func(ctx context.Context) (string, bool, error) { return c.doRequest(ctx, body) }, nil
+}
+
+func (c *Chat) complete(ctx context.Context, system, user string, image []byte, mime string) (string, error) {
+	try, err := c.attempt(system, user, image, mime)
+	if err != nil {
 		return "", err
 	}
-
 	maxRetries := c.MaxRetries
 	if maxRetries <= 0 {
 		maxRetries = 4
 	}
 	var lastErr error
 	for attempt := 0; ; attempt++ {
-		text, retryable, err := c.doRequest(ctx, body)
+		text, retryable, err := try(ctx)
 		if err == nil {
 			return text, nil
 		}
@@ -127,9 +159,9 @@ func (c *Chat) WaitReady(ctx context.Context, timeout time.Duration) error {
 			return nil
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("chat endpoint %s not ready after %s: %w", c.BaseURL, timeout, err)
+			return fmt.Errorf("chat endpoint %s not ready after %s: %w", c.endpoint(), timeout, err)
 		}
-		c.logger().Info("waiting for chat endpoint", "base_url", c.BaseURL, "model", c.Model, "error", err)
+		c.logger().Info("waiting for chat endpoint", "base_url", c.endpoint(), "model", c.Model, "error", err)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -144,6 +176,10 @@ func (c *Chat) WaitReady(ctx context.Context, timeout time.Duration) error {
 // return empty content, which is a real error for indexing but says nothing
 // about whether the model is loaded.
 func (c *Chat) probe(ctx context.Context) error {
+	if c.Bedrock != nil {
+		_, _, err := c.Bedrock.converse(ctx, c, "", "ping", nil, "", 1)
+		return err
+	}
 	payload := map[string]any{
 		"model":       c.Model,
 		"messages":    []map[string]any{{"role": "user", "content": "ping"}},
