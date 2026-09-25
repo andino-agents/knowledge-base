@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **Amazon Bedrock backend** (`type: bedrock`): embeddings with Titan Text
+  Embeddings v2 and chat (contextual retrieval and OCR) through the Converse
+  API, called directly with the AWS SDK instead of through an OpenAI proxy.
+  Credentials come from the AWS default chain, so a VM with an instance role
+  needs nothing in the config file; a `base_url` or `api_key` on a Bedrock
+  backend is a load error. Reranking is not available on Bedrock and is
+  refused at load. Retries keep the existing contract: throttling and
+  server errors retry, validation and permission errors do not.
+
 ## v0.5.0
 
 pgvector storage provider. andino-kb can now point at a shared PostgreSQL

@@ -77,10 +77,15 @@ func runDoctor(ctx context.Context, configPath string) error {
 				report("embedding model "+kb.EmbeddingModel, err, "")
 				continue
 			}
+			transport, err := app.BedrockFor(ctx, backend)
+			if err != nil {
+				report("embedding model "+kb.EmbeddingModel, err, "")
+				continue
+			}
 			emb := &inference.Embedder{
 				BaseURL: backend.BaseURL, APIKey: backend.APIKey,
 				Model: model.Model, Dimensions: model.Dimensions, MaxRetries: 1,
-				Logger: discardLogger(),
+				Bedrock: transport, Logger: discardLogger(),
 			}
 			probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			_, err = emb.Embed(probeCtx, []string{"doctor probe"})
@@ -121,14 +126,19 @@ func runDoctor(ctx context.Context, configPath string) error {
 			if err != nil {
 				report("contextual model "+kb.Contextual.Model, err, "")
 			} else {
-				chat := &inference.Chat{BaseURL: backend.BaseURL, APIKey: backend.APIKey,
-					Model: chatModel.Model, MaxTokens: chatModel.MaxTokens, ExtraBody: chatModel.ExtraBody, MaxRetries: 1,
-					Logger: discardLogger()}
-				probeCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
-				_, err = chat.Complete(probeCtx, "Answer with one word.", "Say: ready")
-				cancel()
-				report("contextual chat "+chatModel.Model, err,
-					pick(err, "empty content usually means a thinking-first model: set extra_body chat_template_kwargs.enable_thinking=false", ""))
+				transport, err := app.BedrockFor(ctx, backend)
+				if err != nil {
+					report("contextual model "+kb.Contextual.Model, err, "")
+				} else {
+					chat := &inference.Chat{BaseURL: backend.BaseURL, APIKey: backend.APIKey,
+						Model: chatModel.Model, MaxTokens: chatModel.MaxTokens, ExtraBody: chatModel.ExtraBody, MaxRetries: 1,
+						Bedrock: transport, Logger: discardLogger()}
+					probeCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+					_, err = chat.Complete(probeCtx, "Answer with one word.", "Say: ready")
+					cancel()
+					report("contextual chat "+chatModel.Model, err,
+						pick(err, "empty content usually means a thinking-first model: set extra_body chat_template_kwargs.enable_thinking=false", ""))
+				}
 			}
 		}
 
@@ -138,14 +148,19 @@ func runDoctor(ctx context.Context, configPath string) error {
 			if err != nil {
 				report("ocr model "+kb.OCR.Model, err, "")
 			} else {
-				chat := &inference.Chat{BaseURL: backend.BaseURL, APIKey: backend.APIKey,
-					Model: chatModel.Model, MaxTokens: chatModel.MaxTokens, ExtraBody: chatModel.ExtraBody, MaxRetries: 1,
-					Logger: discardLogger()}
-				probeCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
-				_, err = chat.CompleteWithImage(probeCtx, "Describe the image in one word.", "What color is this image?", doctorPNG(), "image/png")
-				cancel()
-				report("ocr vision "+chatModel.Model, err,
-					pick(err, "the model must be vision-capable (llama.cpp needs an mmproj; or point at a vision VLM endpoint)", ""))
+				transport, err := app.BedrockFor(ctx, backend)
+				if err != nil {
+					report("ocr model "+kb.OCR.Model, err, "")
+				} else {
+					chat := &inference.Chat{BaseURL: backend.BaseURL, APIKey: backend.APIKey,
+						Model: chatModel.Model, MaxTokens: chatModel.MaxTokens, ExtraBody: chatModel.ExtraBody, MaxRetries: 1,
+						Bedrock: transport, Logger: discardLogger()}
+					probeCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+					_, err = chat.CompleteWithImage(probeCtx, "Describe the image in one word.", "What color is this image?", doctorPNG(), "image/png")
+					cancel()
+					report("ocr vision "+chatModel.Model, err,
+						pick(err, "the model must be vision-capable (llama.cpp needs an mmproj; or point at a vision VLM endpoint)", ""))
+				}
 			}
 		}
 	}
